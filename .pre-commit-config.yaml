@@ -39,3 +39,10 @@ repos:
     rev: v2.32.1
     hooks:
       - id: pyupgrade
+  - repo: https://github.com/packit/pre-commit-hooks
+    rev: 3bf9afc5ede12a4ee26e9451f306edf255749396
+    hooks:
+      - id: check-rebase
+        args:
+          - https://github.com/packit/packit-service.git
+        stages: [manual, push]
