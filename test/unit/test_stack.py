@@ -206,3 +206,31 @@ class TestStack:
 
         stack = FileStack(ppid=123)
         assert stack.show_slice_of_paths(from_, to, is_forward) == result
+
+    @pytest.mark.parametrize(
+        "path,is_forward",
+        [
+            pytest.param(
+                Path(f"/tmp/dirstory/{StackType.forward}_dir_stack/123"),
+                True,
+            ),
+            pytest.param(
+                Path(f"/tmp/dirstory/{StackType.backward}_dir_stack/123"),
+                False,
+            ),
+        ],
+    )
+    def test_erase_stack(self, path, is_forward):
+        fake_file = StringIO("/some/path\n/other/path\n/different/path\n")
+        fake_file.close = (
+            lambda: None
+        )  # do not close the file even if Jesus tells you to do so
+
+        flexmock(builtins).should_receive("open").with_args(path, "w").and_return(
+            fake_file
+        )
+
+        stack = FileStack(ppid=123)
+        stack.erase_file_stack(is_forward)
+        fake_file.seek(os.SEEK_SET)
+        assert fake_file.read() == ""

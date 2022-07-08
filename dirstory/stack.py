@@ -60,3 +60,8 @@ class FileStack:
     def show_slice_of_paths(self, from_: int, to: int, is_forward: bool) -> List[str]:
         with open(self._get_stack_path(is_forward), "r") as stack_file:
             return stack_file.readlines()[from_:to]
+
+    def erase_file_stack(self, is_forward: bool) -> None:
+        with open(self._get_stack_path(is_forward), "w") as stack_file:
+            stack_file.seek(os.SEEK_SET)
+            stack_file.truncate()
