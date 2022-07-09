@@ -5,8 +5,10 @@ ENV PYTHONDONTWRITEBYTECODE 1
 
 WORKDIR /app
 
+RUN apk add bash
+
 RUN pip install --upgrade pip
-RUN pip install poetry
+RUN pip install pipenv
 
 COPY . .
-RUN poetry install
+RUN pipenv install --system --dev
