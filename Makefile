@@ -6,5 +6,9 @@ build-image:
 	$(CONTAINER_ENGINE) build -f test/Containerfile . -t $(CONTAINER_TEST_NAME)
 
 
+enter-image:
+	$(CONTAINER_ENGINE) run --rm -it $(CONTAINER_TEST_NAME) /bin/sh
+
+
 test-in-container: build-image
-	$(CONTAINER_ENGINE) run --rm -it $(CONTAINER_TEST_NAME) /bin/sh -c "poetry run pytest -vvv test/"
+	$(CONTAINER_ENGINE) run --rm -it $(CONTAINER_TEST_NAME) /bin/sh -c "pytest -vvv test/"
