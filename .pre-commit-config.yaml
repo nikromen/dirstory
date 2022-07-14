@@ -46,3 +46,7 @@ repos:
         args:
           - https://github.com/packit/packit-service.git
         stages: [manual, push]
+  - repo: https://github.com/lovesegfault/beautysh
+    rev: v6.2.1
+    hooks:
+      - id: beautysh

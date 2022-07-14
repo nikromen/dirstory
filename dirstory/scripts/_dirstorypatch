@@ -1,0 +1,22 @@
+#!/bin/bash
+
+cd() {
+    local args=()
+    while true; do
+        case $1 in
+            -*)
+                args+=("$1")
+                shift
+                ;;
+            "")
+                dirstory push $$ "$(pwd)"
+                command cd "${args[@]}" || return
+                break
+                ;;
+            *)
+                args+=("$1")
+                shift
+                ;;
+        esac
+    done
+}

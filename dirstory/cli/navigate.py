@@ -21,16 +21,18 @@ def back_or_forward(
 
 
 @click.command("back")
+@click.argument("pid", type=int, nargs=1)
 @click.option("-s", "--size", default=1, type=int, help="Goes back by N steps.")
-@click.pass_obj
-def back(file_stack: FileStack, size: int) -> None:
+def back(pid: int, size: int) -> None:
     """Returns a previously visited directories."""
+    file_stack = FileStack(ppid=pid)
     click.echo(back_or_forward(file_stack, size, False), nl=False)
 
 
 @click.command("forward")
+@click.argument("pid", type=int, nargs=1)
 @click.option("-s", "--size", default=1, type=int, help="Goes forward by N steps.")
-@click.pass_obj
-def forward(file_stack: FileStack, size: int) -> None:
+def forward(pid: int, size: int) -> None:
     """Returns directories from which you last stepped back."""
+    file_stack = FileStack(ppid=pid)
     click.echo(back_or_forward(file_stack, size, True), nl=False)

@@ -62,6 +62,10 @@ class FileStack:
             return stack_file.readlines()[from_:to]
 
     def erase_file_stack(self, is_forward: bool) -> None:
-        with open(self._get_stack_path(is_forward), "w") as stack_file:
+        stack_path = self._get_stack_path(is_forward)
+        if not stack_path.is_file():
+            return
+
+        with open(stack_path, "w") as stack_file:
             stack_file.seek(os.SEEK_SET)
             stack_file.truncate()

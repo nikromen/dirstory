@@ -2,5 +2,11 @@
 
 from setuptools import setup
 
+from dirstory.constants import VERSION
 
-setup()
+if __name__ == "__main__":
+    setup(
+        version=VERSION,
+        package_data={"": ["scripts/_dirstorypatch"]},
+        include_package_data=True,
+    )

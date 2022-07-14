@@ -220,7 +220,8 @@ class TestStack:
             ),
         ],
     )
-    def test_erase_stack(self, path, is_forward):
+    @patch.object(Path, "is_file")
+    def test_erase_stack(self, mock_pathlib_is_file, path, is_forward):
         fake_file = StringIO("/some/path\n/other/path\n/different/path\n")
         fake_file.close = (
             lambda: None
@@ -229,6 +230,8 @@ class TestStack:
         flexmock(builtins).should_receive("open").with_args(path, "w").and_return(
             fake_file
         )
+
+        mock_pathlib_is_file.return_value = True
 
         stack = FileStack(ppid=123)
         stack.erase_file_stack(is_forward)
