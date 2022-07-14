@@ -36,6 +36,7 @@ def init_dirstory_patch() -> None:
         click.echo("dirstory config already installed in ~/.bashrc.\n Skipping.")
         return
 
+    click.echo("dirstory's config not found in ~/.bashrc... trying to make one.")
     with open(os.path.expanduser("~/.bashrc"), "a+") as bashrc:
         location = _get_dirstory_patch_location()
         click.echo("Writing a config script to ~/.bashrc file.")
