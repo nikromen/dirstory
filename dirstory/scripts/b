@@ -3,14 +3,14 @@
 ppid=$$
 case $1 in
     -l)
-        dirstory $ppid blist $2
+        dirstory blist $ppid $2
         ;;
     -h|--help)
-        dirstory 123 back --help
+        dirstory back --help
         ;;
     *)
         step_back_path=""
-        step_back_path=$(dirstory $ppid back)
+        step_back_path=$(dirstory back $ppid)
         command cd "${step_back_path}" || exit
         ;;
 esac

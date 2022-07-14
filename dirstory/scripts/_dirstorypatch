@@ -9,7 +9,7 @@ cd() {
                 shift
                 ;;
             "")
-                dirstory $$ push "$(pwd)"
+                dirstory push $$ "$(pwd)"
                 command cd "${args[@]}" || return
                 break
                 ;;

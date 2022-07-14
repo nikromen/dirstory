@@ -18,9 +18,8 @@ class TestStack:
     def test_cd_push(self, mock_erase_file_stack, mock_push, path):
         # should only call method for erasing the forward stack
         # and push to backward stack
-        file_stack = FileStack(ppid=123)
         runner = CliRunner()
-        runner.invoke(cd_push, [path], obj=file_stack)
+        runner.invoke(cd_push, ["123", path])
 
         mock_erase_file_stack.assert_called_once_with(is_forward=True)
         mock_push.assert_called_once_with(path=Path(path), is_forward=False)
@@ -59,33 +58,41 @@ class TestNavigate:
         assert expected == result
 
     @patch("dirstory.cli.navigate.back_or_forward")
-    def test_back_with_size(self, mock_back_or_forward):
-        file_stack = FileStack(ppid=123)
-        runner = CliRunner()
-        runner.invoke(back, ["--size", "3"], obj=file_stack)
+    @patch("dirstory.cli.navigate.FileStack")
+    def test_back_with_size(self, mock_file_stack, mock_back_or_forward):
+        mock_file_stack.return_value = mock_file_stack
 
-        mock_back_or_forward.assert_called_once_with(file_stack, 3, False)
+        runner = CliRunner()
+        runner.invoke(back, ["--size", "3", "123"])
+
+        mock_back_or_forward.assert_called_once_with(mock_file_stack, 3, False)
 
     @patch("dirstory.cli.navigate.back_or_forward")
-    def test_forward_with_size(self, mock_back_or_forward):
-        file_stack = FileStack(ppid=123)
-        runner = CliRunner()
-        runner.invoke(forward, ["--size", "3"], obj=file_stack)
+    @patch("dirstory.cli.navigate.FileStack")
+    def test_forward_with_size(self, mock_file_stack, mock_back_or_forward):
+        mock_file_stack.return_value = mock_file_stack
 
-        mock_back_or_forward.assert_called_once_with(file_stack, 3, True)
+        runner = CliRunner()
+        runner.invoke(forward, ["--size", "3", "123"])
+
+        mock_back_or_forward.assert_called_once_with(mock_file_stack, 3, True)
 
     @patch("dirstory.cli.navigate.back_or_forward")
-    def test_back_without_size(self, mock_back_or_forward):
-        file_stack = FileStack(ppid=123)
-        runner = CliRunner()
-        runner.invoke(back, obj=file_stack)
+    @patch("dirstory.cli.navigate.FileStack")
+    def test_back_without_size(self, mock_file_stack, mock_back_or_forward):
+        mock_file_stack.return_value = mock_file_stack
 
-        mock_back_or_forward.assert_called_once_with(file_stack, 1, False)
+        runner = CliRunner()
+        runner.invoke(back, ["123"])
+
+        mock_back_or_forward.assert_called_once_with(mock_file_stack, 1, False)
 
     @patch("dirstory.cli.navigate.back_or_forward")
-    def test_forward_without_size(self, mock_back_or_forward):
-        file_stack = FileStack(ppid=123)
-        runner = CliRunner()
-        runner.invoke(forward, obj=file_stack)
+    @patch("dirstory.cli.navigate.FileStack")
+    def test_forward_without_size(self, mock_file_stack, mock_back_or_forward):
+        mock_file_stack.return_value = mock_file_stack
 
-        mock_back_or_forward.assert_called_once_with(file_stack, 1, True)
+        runner = CliRunner()
+        runner.invoke(forward, ["123"])
+
+        mock_back_or_forward.assert_called_once_with(mock_file_stack, 1, True)
