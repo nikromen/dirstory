@@ -16,9 +16,9 @@ f() {
             echo "$help"
             ;;
         *)
-            step_back_path=""
-            step_back_path=$(dirstory back $ppid)
-            command cd "${step_back_path}" || exit
+            step_forward_path=""
+            step_forward_path=$(dirstory forward $ppid)
+            command cd "${step_forward_path}" || exit
             ;;
     esac
 }
