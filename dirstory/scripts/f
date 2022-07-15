@@ -7,7 +7,13 @@ f() {
             dirstory flist $ppid -s $2
             ;;
         -h|--help)
-            dirstory forward $ppid --help
+            help="Goes to a previously backed directories.
+
+            Options:
+            INTEGER     Goes forward by N steps.
+            -l INTEGER  Show last N directiories which you backed.
+            --help      Show this message and exit."
+            echo "$help"
             ;;
         *)
             step_back_path=""

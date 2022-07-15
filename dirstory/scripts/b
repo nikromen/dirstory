@@ -7,7 +7,13 @@ b() {
             dirstory blist $ppid $2
             ;;
         -h|--help)
-            dirstory back --help
+            help="Goes to a previously visited directories.
+
+            Options:
+            INTEGER     Goes back by N steps.
+            -l INTEGER  Show last N directiories where you were.
+            --help      Show this message and exit."
+            echo "$help"
             ;;
         *)
             step_back_path=""
