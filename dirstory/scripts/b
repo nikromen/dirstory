@@ -15,6 +15,10 @@ b() {
             --help      Show this message and exit."
             echo "$help"
             ;;
+        [0-9])
+            step_back_path=""
+            step_back_path=$(dirstory back -s "$1" $ppid)
+            ;;
         *)
             step_back_path=""
             step_back_path=$(dirstory back $ppid)
