@@ -1,16 +1,18 @@
 #!/bin/bash
 
-ppid=$$
-case $1 in
-    -l)
-        dirstory flist $ppid -s $2
-        ;;
-    -h|--help)
-        dirstory forward $ppid --help
-        ;;
-    *)
-        step_back_path=""
-        step_back_path=$(dirstory back $ppid)
-        command cd "${step_back_path}" || exit
-        ;;
-esac
+f() {
+    ppid=$$
+    case $1 in
+        -l)
+            dirstory flist $ppid -s $2
+            ;;
+        -h|--help)
+            dirstory forward $ppid --help
+            ;;
+        *)
+            step_back_path=""
+            step_back_path=$(dirstory back $ppid)
+            command cd "${step_back_path}" || exit
+            ;;
+    esac
+}
