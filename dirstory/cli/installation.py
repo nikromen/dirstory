@@ -24,10 +24,14 @@ class PostInstallScript:
         click.echo(f"Location found: {self._dirstory_location}")
         return self._dirstory_location
 
-    @property
-    def dirstory_patch_location(self) -> str:
-        location_of_patch = self.dirstory_location + "/dirstory/scripts/_dirstorypatch"
-        click.echo(f"Location of dirstory's bash script found: {location_of_patch}")
+    def _get_dirstory_script_location(self, script: str) -> str:
+        location_of_patch = self.dirstory_location + f"/dirstory/scripts/{script}"
+        if not Path(location_of_patch).is_file():
+            raise FileNotFoundError(f"File: {location_of_patch} does not exist.")
+
+        click.echo(
+            f"Location of dirstory's bash script {script} found: {location_of_patch}"
+        )
         return location_of_patch
 
     @staticmethod
@@ -48,9 +52,14 @@ class PostInstallScript:
 
         click.echo("dirstory's config not found in ~/.bashrc... trying to make one.")
         with open(os.path.expanduser("~/.bashrc"), "a+") as bashrc:
-            location = self.dirstory_patch_location
             click.echo("Writing a config script to ~/.bashrc file.")
-            bashrc.write(DirstoryBashrcText.content_to_write(location))
+            bashrc.write(
+                DirstoryBashrcText.content_to_write(
+                    _dirstorypatch=self._get_dirstory_script_location("_dirstorypatch"),
+                    b=self._get_dirstory_script_location("b"),
+                    f=self._get_dirstory_script_location("f"),
+                )
+            )
 
 
 @click.command("install")
