@@ -4,7 +4,7 @@ b() {
     ppid=$$
     case $1 in
         -l)
-            dirstory blist $ppid $2
+            dirstory blist $ppid -s $2
             ;;
         -h|--help)
             help="Goes to a previously visited directories.
