@@ -1,16 +1,28 @@
 #!/bin/bash
 
-ppid=$$
-case $1 in
-    -l)
-        dirstory flist $ppid -s $2
-        ;;
-    -h|--help)
-        dirstory forward $ppid --help
-        ;;
-    *)
-        step_back_path=""
-        step_back_path=$(dirstory back $ppid)
-        command cd "${step_back_path}" || exit
-        ;;
-esac
+f() {
+    ppid=$$
+    case $1 in
+        -l)
+            dirstory flist $ppid -s $2
+            ;;
+        -h|--help)
+            help="Goes to a previously backed directories.
+
+            Options:
+            INTEGER     Goes forward by N steps.
+            -l INTEGER  Show last N directiories which you backed.
+            --help      Show this message and exit."
+            echo "$help"
+            ;;
+        [0-9])
+            step_forward_path=""
+            step_forward_path=$(dirstory back -s "$1" $ppid)
+            ;;
+        *)
+            step_forward_path=""
+            step_forward_path=$(dirstory forward $ppid)
+            command cd "${step_forward_path}" || exit
+            ;;
+    esac
+}

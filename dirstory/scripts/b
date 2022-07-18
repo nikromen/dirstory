@@ -1,16 +1,28 @@
 #!/bin/bash
 
-ppid=$$
-case $1 in
-    -l)
-        dirstory blist $ppid $2
-        ;;
-    -h|--help)
-        dirstory back --help
-        ;;
-    *)
-        step_back_path=""
-        step_back_path=$(dirstory back $ppid)
-        command cd "${step_back_path}" || exit
-        ;;
-esac
+b() {
+    ppid=$$
+    case $1 in
+        -l)
+            dirstory blist $ppid -s $2
+            ;;
+        -h|--help)
+            help="Goes to a previously visited directories.
+
+            Options:
+            INTEGER     Goes back by N steps.
+            -l INTEGER  Show last N directiories where you were.
+            --help      Show this message and exit."
+            echo "$help"
+            ;;
+        [0-9])
+            step_back_path=""
+            step_back_path=$(dirstory back -s "$1" $ppid)
+            ;;
+        *)
+            step_back_path=""
+            step_back_path=$(dirstory back $ppid)
+            command cd "${step_back_path}" || exit
+            ;;
+    esac
+}

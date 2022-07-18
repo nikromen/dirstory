@@ -12,3 +12,8 @@ enter-image:
 
 test-in-container: build-image
 	$(CONTAINER_ENGINE) run --rm -it $(CONTAINER_TEST_NAME) /bin/sh -c "pytest -vvv test/"
+
+
+test-installation-in-container: build-image
+	$(CONTAINER_ENGINE) run --rm -it $(CONTAINER_TEST_NAME) \
+		/bin/sh -c "pip install . && dirstory install"
