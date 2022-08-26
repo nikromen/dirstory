@@ -33,9 +33,12 @@ class TestNavigate:
             pytest.param(3, False, Path("/here\n")),
         ],
     )
+    @patch("os.getcwd")
     @patch.object(FileStack, "pop")
     @patch.object(FileStack, "push")
-    def test_back_or_forward(self, mock_push, mock_pop, size, is_forward, expected):
+    def test_back_or_forward(
+        self, mock_push, mock_pop, mock_getcwd, size, is_forward, expected
+    ):
         mocked_pop_ret_vals = [
             Path("/some\n"),
             Path("/path\n"),
@@ -43,6 +46,7 @@ class TestNavigate:
             Path("/dragon\n"),
         ]
         mock_pop.side_effect = mocked_pop_ret_vals
+        mock_getcwd.side_effect = mocked_pop_ret_vals
 
         result = back_or_forward(FileStack(ppid=123), size, is_forward)
 

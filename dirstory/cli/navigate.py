@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -15,7 +16,7 @@ def back_or_forward(
         if curr_path is None:
             break
 
-        file_stack.push(path=curr_path, is_forward=not is_forward)
+        file_stack.push(path=Path(os.getcwd()), is_forward=not is_forward)
 
     return curr_path
 
