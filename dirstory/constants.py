@@ -1,7 +1,7 @@
 from enum import Enum
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 DIR_STACKS_LOCATION = Path("/tmp/dirstory")
 DIR_STACK_PATH_SUFFIX = "{type}_dir_stack/{ppid}"
