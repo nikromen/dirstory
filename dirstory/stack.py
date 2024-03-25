@@ -54,11 +54,11 @@ class FileStack:
         if n == 0:
             return []
 
-        with open(self._get_stack_path(is_forward), "r") as stack_file:
+        with open(self._get_stack_path(is_forward)) as stack_file:
             return stack_file.readlines()[-n:]
 
     def show_slice_of_paths(self, from_: int, to: int, is_forward: bool) -> List[str]:
-        with open(self._get_stack_path(is_forward), "r") as stack_file:
+        with open(self._get_stack_path(is_forward)) as stack_file:
             return stack_file.readlines()[from_:to]
 
     def erase_file_stack(self, is_forward: bool) -> None:
