@@ -42,7 +42,7 @@ class PostInstallScript:
             return False
 
         click.echo("~/.bashrc file found. Trying to find dirstory's config in it.")
-        with open(bashrc_path, "r") as bashrc:
+        with open(bashrc_path) as bashrc:
             return DirstoryBashrcText.START in bashrc.read()
 
     def init_dirstory_install(self) -> None:
