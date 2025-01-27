@@ -15,17 +15,13 @@ test-unit:
     podman run --rm -ti -v {{working_dir}}:{{bind_path}}:Z {{container_name}} \
         bash -c "cd {{bind_path}} && RUST_BACKTRACE=full cargo test"
 
-test-e2e:
-    podman run --rm -ti -v {{working_dir}}:/{{bind_path}}:Z {{container_name}} \
-        bash -c \
-            "cd {{bind_path}} && \
-            cargo build --release && \
-            chmod +x target/release/dirstory && \
-            cp target/release/dirstory /bin/dirstory && \
-            ./test/e2e/runtest.sh"
+test-e2e: rebuild
+    podman run --rm -ti {{container_name}} bash -c "./test/e2e/runtest.sh"
 
-# rebuilding before e2e so unit doesn't influence e2e in some way
-test: rebuild test-unit rebuild test-e2e
+rm-image:
+    podman image rm {{container_name}}
+
+test: rebuild test-unit test-e2e
 
 clean-local:
     cargo clean

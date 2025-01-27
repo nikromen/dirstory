@@ -1,0 +1,5 @@
+TEST_DIR=$(dirname "$(realpath "$0")")
+TEST_CASES=$TEST_DIR/tests
+UTILS=$TEST_DIR/utils
+
+export TEST_DIR TEST_CASES UTILS
