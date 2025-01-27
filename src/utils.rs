@@ -1,5 +1,5 @@
 use std::env;
-use std::process;
+use std::os::unix::process;
 
 use crate::config::{Config, Mode};
 
@@ -15,7 +15,7 @@ pub fn get_tmp_dir() -> String {
         // Assumes other scripts are launched from profiles (e.g. .bashrc) to match
         // the parent process id. Otherwise, it needs to find grandparent process id to
         // match the shell process id.
-        process::id().to_string()
+        process::parent_id().to_string()
     };
 
     format!("{}/dirstory/{}", tmp_dir, identifier)
