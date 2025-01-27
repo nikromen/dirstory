@@ -17,4 +17,4 @@ WORKDIR /app/copy
 
 RUN cargo clean
 RUN cargo build --release
-ENV PATH="/app/target/release:${PATH}"
+ENV PATH="/app/copy/target/release:${PATH}"
