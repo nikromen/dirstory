@@ -117,7 +117,7 @@ Arguments:
             "")
                 dirstory stack --stack-type forward empty
                 dirstory stack --stack-type backward push "$(pwd)"
-                builting cd "${args[@]}"
+                builtin cd "${args[@]}"
                 break
                 ;;
             *)
