@@ -1,0 +1,20 @@
+FROM fedora:latest
+
+RUN dnf update -y && dnf install -y \
+    rust \
+    cargo \
+    bash \
+    zsh \
+    fish && \
+    dnf clean all
+
+RUN mkdir -p /app/bind
+RUN mkdir -p /app/copy
+
+COPY . /app/copy
+
+WORKDIR /app/copy
+
+RUN cargo clean
+RUN cargo build --release
+ENV PATH="/app/target/release:${PATH}"
