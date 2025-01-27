@@ -8,13 +8,13 @@ WORKDIR=$(dirname "$(realpath "$0")")
 . "$UTILS/helpers.sh"
 
 echo "Running tests for sh..."
-"$TEST_CASES/sh.sh"
+run_test sh.sh
 
 echo "Running tests for bash..."
-"$TEST_CASES/bash.sh"
+run_test bash.sh
 
 echo "Running tests for zsh..."
-"$TEST_CASES/zsh.sh"
+run_test zsh.sh
 
 echo "Running tests for fish..."
-"$TEST_CASES/fish.sh"
+run_test fish.sh
