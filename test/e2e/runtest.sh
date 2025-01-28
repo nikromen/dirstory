@@ -14,7 +14,7 @@ echo "Running tests for bash..."
 run_test bash.sh
 
 echo "Running tests for zsh..."
-run_test zsh.sh
+run_test zsh.zsh
 
 echo "Running tests for fish..."
-run_test fish.sh
+run_test fish.fish
