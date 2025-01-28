@@ -12,8 +12,6 @@ while IFS= read -r line; do
     pipe_text="${pipe_text}${line}\n"
 done
 
-pipe_text=$(printf "%b" "$pipe_text" | sed 's/\n$//')
-
 if [ "$pipe_text" = "$argument_text" ]; then
     echo "PASS | $2"
     exit 0

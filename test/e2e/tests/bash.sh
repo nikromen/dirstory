@@ -9,4 +9,6 @@ source "$HOME/.bashrc"
 
 echo "Dirstory for bash installed successfully"
 
+cmp="$UTILS/cmp.sh"
+fst_dir=$(pwd)
 source "$TEST_CASES/common.sh"

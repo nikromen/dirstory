@@ -9,4 +9,6 @@ echo "eval \"\$(dirstory init sh)\"" >> "$HOME/.shrc"
 
 echo "Dirstory for sh installed successfully"
 
+cmp="$UTILS/cmp.sh"
+fst_dir=$(pwd)
 . "$TEST_CASES/common.sh"
