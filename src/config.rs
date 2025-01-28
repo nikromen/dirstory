@@ -5,13 +5,15 @@ use serde::{Deserialize, Serialize};
 #[derive(PartialEq, Deserialize, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
-    Normal,
+    Ppid,
     Tmux,
+    Tty,
 }
 
 #[derive(Deserialize, Debug, Serialize)]
 pub struct Config {
     pub mode: Mode,
+    pub unique_top: bool,
 }
 
 impl Config {
@@ -21,7 +23,10 @@ impl Config {
             return Self::parse_config_file(&file);
         }
 
-        Self { mode: Mode::Normal }
+        Self {
+            mode: Mode::Tty,
+            unique_top: true,
+        }
     }
 
     fn get_config_file() -> Option<String> {
@@ -60,7 +65,8 @@ mod tests {
     use test_case::test_case;
 
     #[test_case("---\nmode: tmux\n", Mode::Tmux ; "tmux mode")]
-    #[test_case("---\nmode: normal\n", Mode::Normal ; "normal mode")]
+    #[test_case("---\nmode: tty\n", Mode::Tty ; "normal mode")]
+    #[test_case("---\nmode: ppid\n", Mode::Ppid ; "ppid mode")]
     fn test_parse_config_file(content: &str, expected: Mode) {
         let mut file = Builder::new().suffix(".yaml").tempfile().unwrap();
         file.write_all(content.as_bytes()).unwrap();
