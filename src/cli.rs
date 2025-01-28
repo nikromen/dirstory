@@ -2,6 +2,7 @@ use std::env;
 
 use clap::{Parser, Subcommand};
 
+use crate::config::Config;
 use crate::enums::{Shell, StackType};
 use crate::shell::generate_template;
 use crate::stack::get_or_create_stack_from_path;
@@ -89,8 +90,8 @@ enum NavigateCommands {
     },
 }
 
-fn match_navigate_commands(navigate_cmd: &NavigateCommands) {
-    let prefix = get_tmp_dir() + "/";
+fn match_navigate_commands(navigate_cmd: &NavigateCommands, config: Config) {
+    let prefix = get_tmp_dir(config.mode) + "/";
     let current_dir = env::current_dir().unwrap();
     let pwd = current_dir.to_str().unwrap().to_string();
 
@@ -134,8 +135,8 @@ fn match_navigate_commands(navigate_cmd: &NavigateCommands) {
     }
 }
 
-fn match_stack_commands(stack_cmd: &StackCommands, stack_type: &StackType) {
-    let stack_path = get_tmp_dir() + "/" + stack_type.as_str();
+fn match_stack_commands(stack_cmd: &StackCommands, stack_type: &StackType, config: Config) {
+    let stack_path = get_tmp_dir(config.mode) + "/" + stack_type.as_str();
     let mut stack = get_or_create_stack_from_path(&stack_path);
 
     match stack_cmd {
@@ -162,15 +163,17 @@ fn match_stack_commands(stack_cmd: &StackCommands, stack_type: &StackType) {
 
 impl Cli {
     pub fn run(&self) {
+        let config = Config::new();
+
         match &self.cmd {
             Commands::Stack {
                 stack_type,
                 stack_cmd,
             } => {
-                match_stack_commands(stack_cmd, stack_type);
+                match_stack_commands(stack_cmd, stack_type, config);
             }
             Commands::Navigate { navigate_cmd } => {
-                match_navigate_commands(navigate_cmd);
+                match_navigate_commands(navigate_cmd, config);
             }
             Commands::Init { command, shell } => {
                 let template = generate_template(shell, command);
