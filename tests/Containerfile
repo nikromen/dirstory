@@ -1,0 +1,12 @@
+FROM fedora:latest
+
+RUN dnf install -y \
+    rust cargo clippy rustfmt \
+    bash dash zsh fish \
+    python3 git just pre-commit nodejs \
+    && dnf clean all
+
+# Sources are mounted at runtime. Build and hook caches live in named volumes.
+WORKDIR /workspace
+RUN git config --global --add safe.directory /workspace
+CMD ["just", "test"]

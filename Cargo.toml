@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Jiri Kyjovsky <j1.kyjovsky@gmail.com>"]
 about = "Add history functionality to your cd command"
 edition = "2021"
+rust-version = "1.89"
 
 [dependencies]
 clap = { version = "4.5.27", features = ["derive"] }

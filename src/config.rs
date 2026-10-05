@@ -64,9 +64,9 @@ mod tests {
     use tempfile::{Builder, NamedTempFile};
     use test_case::test_case;
 
-    #[test_case("---\nmode: tmux\n", Mode::Tmux ; "tmux mode")]
-    #[test_case("---\nmode: tty\n", Mode::Tty ; "normal mode")]
-    #[test_case("---\nmode: ppid\n", Mode::Ppid ; "ppid mode")]
+    #[test_case("---\nmode: tmux\nunique_top: true\n", Mode::Tmux ; "tmux mode")]
+    #[test_case("---\nmode: tty\nunique_top: true\n", Mode::Tty ; "normal mode")]
+    #[test_case("---\nmode: ppid\nunique_top: true\n", Mode::Ppid ; "ppid mode")]
     fn test_parse_config_file(content: &str, expected: Mode) {
         let mut file = Builder::new().suffix(".yaml").tempfile().unwrap();
         file.write_all(content.as_bytes()).unwrap();
@@ -76,9 +76,9 @@ mod tests {
         assert_eq!(config.mode, expected);
     }
 
-    #[test_case(".yaml", "---\nmode: tmux\n" ; "yaml suffix")]
-    #[test_case(".yml", "---\nmode: tmux\n" ; "yml suffix")]
-    #[test_case(".json", r#"{"mode": "tmux"}"# ; "json suffix")]
+    #[test_case(".yaml", "---\nmode: tmux\nunique_top: true\n" ; "yaml suffix")]
+    #[test_case(".yml", "---\nmode: tmux\nunique_top: true\n" ; "yml suffix")]
+    #[test_case(".json", r#"{"mode": "tmux", "unique_top": true}"# ; "json suffix")]
     fn test_parse_config_file_suffixes(suffix: &str, content: &str) {
         let mut file = Builder::new().suffix(suffix).tempfile().unwrap();
         file.write_all(content.as_bytes()).unwrap();
