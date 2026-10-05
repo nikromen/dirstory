@@ -18,6 +18,9 @@ container_args := '--rm --pull=never' \
 export PRE_COMMIT_HOME := env("PRE_COMMIT_HOME", workspace + "/.cache/pre-commit")
 export TEST_FILTER := env("TEST_FILTER", "")
 export TEST_JOBS := env("TEST_JOBS", "1")
+export E2E_SHELL := env("E2E_SHELL", "")
+export E2E_FILTER := env("E2E_FILTER", "")
+export E2E_TIMEOUT := env("E2E_TIMEOUT", "10")
 export RUST_BACKTRACE := env("RUST_BACKTRACE", "1")
 
 default:
@@ -58,7 +61,7 @@ pre-commit:
 # Sequential even if this recipe is invoked with other commands.
 test-all:
     just pre-commit
-    TEST_FILTER= just test
+    TEST_FILTER= E2E_SHELL= E2E_FILTER= just test
 
 clean:
     cargo clean
@@ -75,10 +78,14 @@ container-test-unit:
 
 # Missing shells fail inside the container, rather than silently reducing coverage.
 container-test-e2e:
-    podman run {{container_args}} -e DIRSTORY_REQUIRE_SHELLS=1 {{quote(image)}} just test-e2e
+    podman run {{container_args}} \
+        -e E2E_SHELL -e E2E_FILTER -e E2E_TIMEOUT -e DIRSTORY_REQUIRE_SHELLS=1 \
+        {{quote(image)}} just test-e2e
 
 container-test:
-    podman run {{container_args}} -e TEST_FILTER -e TEST_JOBS -e RUST_BACKTRACE -e DIRSTORY_REQUIRE_SHELLS=1 {{quote(image)}} just test
+    podman run {{container_args}} -e TEST_FILTER -e TEST_JOBS -e RUST_BACKTRACE \
+        -e E2E_SHELL -e E2E_FILTER -e E2E_TIMEOUT -e DIRSTORY_REQUIRE_SHELLS=1 \
+        {{quote(image)}} just test
 
 container-test-full-backtrace:
     RUST_BACKTRACE=full just container-test
@@ -88,7 +95,9 @@ container-pre-commit:
 
 container-test-all:
     just container-build-image
-    podman run {{container_args}} -e TEST_JOBS -e RUST_BACKTRACE -e DIRSTORY_REQUIRE_SHELLS=1 {{quote(image)}} just test-all
+    podman run {{container_args}} -e TEST_JOBS -e RUST_BACKTRACE \
+        -e E2E_SHELL -e E2E_FILTER -e E2E_TIMEOUT -e DIRSTORY_REQUIRE_SHELLS=1 \
+        {{quote(image)}} just test-all
 
 container-shell:
     podman run -it {{container_args}} {{quote(image)}} /bin/bash
