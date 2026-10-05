@@ -3,6 +3,7 @@ mod config;
 mod enums;
 mod history;
 mod shell;
+mod storage;
 mod utils;
 
 use clap::Parser;

@@ -1,51 +1,109 @@
-//! Backend tests use an independent model and real file write checkpoints.
+//! Backend tests use an independent model and injectable storage operations.
 
 use super::*;
 use proptest::prelude::*;
-use std::cell::RefCell;
+use std::fs;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-/// Write boundaries shared by error injection and abrupt-exit tests.
-const POINTS: &[&str] = &[
-    "dirty-marker",
-    "dirty-header",
-    "truncate",
-    "record-length",
-    "record-path",
-    "record-trailer",
-    "final-header",
-];
-
-/// Injection behavior, compiled only into the unit-test executable.
+/// Outcome injected by the test storage, never by history logic.
 #[derive(Clone, Copy)]
-pub(super) enum Action {
+enum Action {
     Error,
     Exit,
 }
 
-/// One selected write boundary and its injected outcome.
-pub(super) struct Fault {
-    pub point: String,
-    pub action: Action,
+/// Failure before, partway through, or after a selected mutation.
+#[derive(Clone, Copy, Debug)]
+enum Timing {
+    Before,
+    Partial,
+    After,
 }
 
-thread_local! {
-    /// Optional readiness notification for the child exercising lock acquisition.
-    static LOCK_READY: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+/// Real disk storage with a deterministic failure on its nth mutation.
+/// Reads and length queries remain unchanged, so reopening validates real bytes.
+struct FaultStorage {
+    inner: FileStorage,
+    remaining: usize,
+    timing: Timing,
+    action: Action,
 }
 
-/// Confirm contention before the real blocking acquisition, then notify the parent.
-pub(super) fn before_lock(lock: &File) -> io::Result<()> {
-    LOCK_READY.with(|ready| {
-        if let Some(path) = ready.borrow().as_ref() {
-            match lock.try_lock() {
-                Err(std::fs::TryLockError::WouldBlock) => fs::write(path, b"ready")?,
-                other => return Err(io::Error::other(format!("Expected contention: {other:?}"))),
-            }
+impl FaultStorage {
+    fn fail(&self) -> io::Result<()> {
+        match self.action {
+            Action::Error => Err(io::Error::other("Injected write failure")),
+            Action::Exit => std::process::exit(77),
         }
-        Ok(())
-    })
+    }
+
+    fn next(&mut self) -> bool {
+        if self.remaining == 0 {
+            return false;
+        }
+        self.remaining -= 1;
+        self.remaining == 0
+    }
+}
+
+impl Storage for FaultStorage {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()> {
+        if !self.next() {
+            return self.inner.write_at(offset, buf);
+        }
+        match self.timing {
+            Timing::Before => {}
+            Timing::Partial => self.inner.write_at(offset, &buf[..buf.len() / 2])?,
+            Timing::After => self.inner.write_at(offset, buf)?,
+        }
+        self.fail()
+    }
+
+    fn length(&self) -> io::Result<u64> {
+        self.inner.length()
+    }
+
+    fn set_len(&mut self, len: u64) -> io::Result<()> {
+        if !self.next() {
+            return self.inner.set_len(len);
+        }
+        if matches!(self.timing, Timing::After | Timing::Partial) {
+            self.inner.set_len(len)?;
+        }
+        self.fail()
+    }
+}
+
+/// Move an initialized file into a test-only storage adapter.
+fn inject(h: History, mutation: usize, timing: Timing, action: Action) -> History<FaultStorage> {
+    History {
+        file: FaultStorage {
+            inner: h.file,
+            remaining: mutation,
+            timing,
+            action,
+        },
+    }
+}
+
+/// Visit/reset perform nine mutations; commit changes only the header (five).
+fn mutations(operation: &str) -> usize {
+    if operation.ends_with("commit") {
+        5
+    } else {
+        9
+    }
+}
+
+/// A failure before the dirty marker or after its final clearing leaves valid data.
+fn remains_valid(mutation: usize, total: usize, timing: Timing) -> bool {
+    (mutation == 1 && matches!(timing, Timing::Before | Timing::Partial))
+        || (mutation == total && matches!(timing, Timing::After))
 }
 
 /// Straightforward visit list, intentionally unaware of the on-disk format.
@@ -227,39 +285,49 @@ fn malformed_files_are_rejected_and_resettable() -> io::Result<()> {
     Ok(())
 }
 
-/// Every real write phase leaves a recognizable dirty state on I/O error.
+/// Errors before, during and after mutations propagate and permit explicit reset.
 #[test]
 fn injected_write_failures_require_reset() -> io::Result<()> {
     for operation in ["visit", "reset", "commit"] {
-        for point in POINTS {
-            if operation == "commit"
-                && !["dirty-marker", "dirty-header", "final-header"].contains(point)
-            {
-                continue;
+        for timing in [Timing::Before, Timing::Partial, Timing::After] {
+            for mutation in 1..=mutations(operation) {
+                let dir = tempfile::tempdir()?;
+                let mut h = History::open(dir.path(), true)?;
+                h.reset(Path::new("/a"))?;
+                h.visit(Path::new("/a"), Path::new("/b"))?;
+                let s = h.select(true, 1)?.unwrap();
+                let mut h = inject(h, mutation, timing, Action::Error);
+                let result = match operation {
+                    "visit" => h.visit(Path::new("/b"), Path::new("/c")),
+                    "reset" => h.reset(Path::new("/reset")),
+                    _ => h.commit(s.revision, s.entry.offset),
+                };
+                assert!(result.is_err(), "{operation}/{mutation}/{timing:?}");
+                drop(h);
+                let mut h = History::open(dir.path(), true)?;
+                assert_eq!(
+                    h.ensure(Path::new("/a")).is_ok(),
+                    remains_valid(mutation, mutations(operation), timing),
+                    "{operation}/{mutation}/{timing:?}"
+                );
+                if remains_valid(mutation, mutations(operation), timing) {
+                    let expected = if mutation == 1 {
+                        "/b"
+                    } else {
+                        match operation {
+                            "visit" => "/c",
+                            "reset" => "/reset",
+                            _ => "/a",
+                        }
+                    };
+                    assert_eq!(h.select(true, 0)?.unwrap().entry.path, Path::new(expected));
+                }
+                h.reset(Path::new("/recovered"))?;
+                assert_eq!(
+                    h.select(true, 0)?.unwrap().entry.path,
+                    Path::new("/recovered")
+                );
             }
-            let dir = tempfile::tempdir()?;
-            let mut h = History::open(dir.path(), true)?;
-            h.reset(Path::new("/a"))?;
-            h.visit(Path::new("/a"), Path::new("/b"))?;
-            let s = h.select(true, 1)?.unwrap();
-            h.fault = Some(Fault {
-                point: point.to_string(),
-                action: Action::Error,
-            });
-            let result = match operation {
-                "visit" => h.visit(Path::new("/b"), Path::new("/c")),
-                "reset" => h.reset(Path::new("/reset")),
-                _ => h.commit(s.revision, s.entry.offset),
-            };
-            assert!(result.is_err(), "{operation}/{point}");
-            drop(h);
-            let mut h = History::open(dir.path(), true)?;
-            assert!(h.ensure(Path::new("/a")).is_err(), "{operation}/{point}");
-            h.reset(Path::new("/recovered"))?;
-            assert_eq!(
-                h.select(true, 0)?.unwrap().entry.path,
-                Path::new("/recovered")
-            );
         }
     }
     Ok(())
@@ -314,13 +382,21 @@ fn process_helper() -> io::Result<()> {
     let dir = PathBuf::from(dir);
     let action = std::env::var("DIRSTORY_TEST_ACTION").unwrap();
     if action == "lock" {
-        LOCK_READY.with(|ready| *ready.borrow_mut() = Some(dir.join("ready")));
-    }
-    let mut h = History::open(&dir, action != "reader")?;
-    if action == "lock" {
+        // Establish real contention before entering the normal blocking open.
+        // The parent retains its lock until it receives this acknowledgement.
+        let probe = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join("history.lock"))?;
+        match probe.try_lock() {
+            Err(std::fs::TryLockError::WouldBlock) => fs::write(dir.join("ready"), b"ready")?,
+            other => return Err(io::Error::other(format!("Expected contention: {other:?}"))),
+        }
+        let _history = History::open(&dir, true)?;
         fs::write(dir.join("entered"), b"entered")?;
         return Ok(());
     }
+    let mut h = History::open(&dir, action != "reader")?;
     if action == "reader" {
         h.select(true, 0)?;
         return Ok(());
@@ -332,39 +408,41 @@ fn process_helper() -> io::Result<()> {
         }
     }
     let selected = h.select(true, 1)?.unwrap();
-    h.fault = Some(Fault {
-        point: std::env::var("DIRSTORY_TEST_POINT").unwrap(),
-        action: Action::Exit,
-    });
+    let mutation = std::env::var("DIRSTORY_TEST_POINT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut h = inject(h, mutation, Timing::After, Action::Exit);
     match action.as_str() {
         "exit-reset" => h.reset(Path::new("/reset"))?,
         "exit-commit" => h.commit(selected.revision, selected.entry.offset)?,
         _ => h.visit(Path::new("/b"), Path::new("/c"))?,
     }
-    panic!("fault checkpoint was not reached");
+    panic!("storage mutation was not reached");
 }
 
 #[test]
 fn abrupt_exit_at_write_boundaries_is_detected() -> io::Result<()> {
     for operation in ["exit-visit", "exit-reset", "exit-commit"] {
-        for point in POINTS {
-            if operation == "exit-commit"
-                && !["dirty-marker", "dirty-header", "final-header"].contains(point)
-            {
-                continue;
-            }
+        for mutation in 1..=mutations(operation) {
             let dir = tempfile::tempdir()?;
             let mut h = History::open(dir.path(), true)?;
             h.reset(Path::new("/a"))?;
             h.visit(Path::new("/a"), Path::new("/b"))?;
             drop(h);
             assert_eq!(
-                child(dir.path(), operation, point).wait().code(),
+                child(dir.path(), operation, &mutation.to_string())
+                    .wait()
+                    .code(),
                 Some(77),
-                "{operation}/{point}"
+                "{operation}/{mutation}"
             );
             let mut h = History::open(dir.path(), true)?;
-            assert!(h.select(true, 0).is_err(), "{operation}/{point}");
+            assert_eq!(
+                h.select(true, 0).is_ok(),
+                remains_valid(mutation, mutations(operation), Timing::After),
+                "{operation}/{mutation}"
+            );
             h.reset(Path::new("/recovered"))?;
         }
     }

@@ -10,9 +10,9 @@
 //! A separate advisory lock is held for the lifetime of [`History`]. Dirty files
 //! require an explicit reset. Writes are not durable: there is no journal or fsync.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::os::unix::{ffi::OsStrExt, ffi::OsStringExt, fs::OpenOptionsExt, fs::PermissionsExt};
+use crate::storage::{FileStorage, Storage};
+use std::io;
+use std::os::unix::{ffi::OsStrExt, ffi::OsStringExt};
 use std::path::{Path, PathBuf};
 
 /// Byte offset of the first record, immediately after the fixed-size header.
@@ -61,16 +61,12 @@ pub struct Selection {
     pub revision: u64,
 }
 
-/// Open history file together with a lock held until this value is dropped.
-pub struct History {
-    file: File,
-
-    // Keep the lock descriptor alive for the complete operation.
-    _lock: File,
-
-    /// Test-only injection at real write boundaries.
-    #[cfg(test)]
-    fault: Option<backend_tests::Fault>,
+/// History logic over storage; the default storage holds a session file lock.
+///
+/// Generic storage uses static dispatch. Tests substitute an adapter that fails
+/// actual I/O operations, without adding failure checkpoints to this logic.
+pub struct History<S = FileStorage> {
+    file: S,
 }
 
 impl History {
@@ -82,65 +78,16 @@ impl History {
     ///
     /// Returns filesystem or lock errors; lock acquisition may block.
     pub fn open(dir: &Path, exclusive: bool) -> io::Result<Self> {
-        fs::DirBuilder::new().recursive(true).create(dir)?;
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .open(dir.join("history.lock"))?;
-
-        #[cfg(test)]
-        backend_tests::before_lock(&lock)?;
-
-        if exclusive {
-            lock.lock()?;
-        } else {
-            lock.lock_shared()?;
-        }
-
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .open(dir.join("history.bin"))?;
-
-        lock.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-
         Ok(Self {
-            file,
-            _lock: lock,
-            #[cfg(test)]
-            fault: None,
+            file: FileStorage::open(dir, exclusive)?,
         })
     }
+}
 
-    /// Trigger a configured error or process exit; absent from production builds.
-    #[cfg(test)]
-    fn checkpoint(&mut self, name: &str) -> io::Result<()> {
-        if let Some(fault) = &self.fault {
-            if fault.point == name {
-                match fault.action {
-                    backend_tests::Action::Error => {
-                        return Err(io::Error::other("Injected write failure"))
-                    }
-                    backend_tests::Action::Exit => std::process::exit(77),
-                }
-            }
-        }
-        Ok(())
-    }
-
+impl<S: Storage> History<S> {
     /// Read exactly the requested bytes, treating premature EOF as corruption.
     fn read_at(&mut self, pos: u64, buf: &mut [u8]) -> io::Result<()> {
-        self.file.seek(SeekFrom::Start(pos))?;
-        self.file.read_exact(buf).map_err(|e| {
+        self.file.read_at(pos, buf).map_err(|e| {
             if e.kind() == io::ErrorKind::UnexpectedEof {
                 invalid()
             } else {
@@ -172,7 +119,7 @@ impl History {
             end: u64::from_le_bytes(b[32..40].try_into().unwrap()),
             revision: u64::from_le_bytes(b[40..48].try_into().unwrap()),
         };
-        if h.current < START || h.current >= h.end || h.end != self.file.metadata()?.len() {
+        if h.current < START || h.current >= h.end || h.end != self.file.length()? {
             return Err(invalid());
         }
 
@@ -193,21 +140,10 @@ impl History {
         // Mark dirty before changing any metadata, and clear it only after
         // the complete header has been written. This is process-interruption
         // detection, not a crash recovery (there is no fsync).
-        self.file.seek(SeekFrom::Start(16))?;
-        self.file.write_all(&[1])?;
-        #[cfg(test)]
-        self.checkpoint("dirty-marker")?;
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.write_all(&b)?;
-        #[cfg(test)]
-        self.checkpoint(if dirty {
-            "dirty-header"
-        } else {
-            "final-header"
-        })?;
+        self.file.write_at(16, &[1])?;
+        self.file.write_at(0, &b)?;
         if !dirty {
-            self.file.seek(SeekFrom::Start(16))?;
-            self.file.write_all(&[0])?;
+            self.file.write_at(16, &[0])?;
         }
         Ok(())
     }
@@ -253,21 +189,14 @@ impl History {
             .checked_add(16)
             .and_then(|n| n.checked_add(len))
             .ok_or_else(invalid)?;
-        self.file.seek(SeekFrom::Start(offset))?;
-        self.file.write_all(&len.to_le_bytes())?;
-        #[cfg(test)]
-        self.checkpoint("record-length")?;
-        self.file.write_all(b)?;
-        #[cfg(test)]
-        self.checkpoint("record-path")?;
-        self.file.write_all(&len.to_le_bytes())?;
-        #[cfg(test)]
-        self.checkpoint("record-trailer")?;
+        self.file.write_at(offset, &len.to_le_bytes())?;
+        self.file.write_at(offset + 8, b)?;
+        self.file.write_at(end - 8, &len.to_le_bytes())?;
         Ok(end)
     }
 
     pub fn reset(&mut self, path: &Path) -> io::Result<()> {
-        let revision = if self.file.metadata()?.len() >= START {
+        let revision = if self.file.length()? >= START {
             self.number(40)?.checked_add(1).unwrap_or(1)
         } else {
             1
@@ -279,14 +208,12 @@ impl History {
         };
         self.write_header(h, true)?;
         self.file.set_len(START)?;
-        #[cfg(test)]
-        self.checkpoint("truncate")?;
         h.end = self.append(START, path)?;
         self.write_header(h, false)
     }
 
     pub fn ensure(&mut self, path: &Path) -> io::Result<()> {
-        if self.file.metadata()?.len() == 0 {
+        if self.file.length()? == 0 {
             self.reset(path)
         } else {
             self.header().map(|_| ())
@@ -307,8 +234,6 @@ impl History {
         h.revision = h.revision.checked_add(1).ok_or_else(invalid)?;
         self.write_header(h, true)?;
         self.file.set_len(offset)?;
-        #[cfg(test)]
-        self.checkpoint("truncate")?;
         h.current = offset;
         h.end = self.append(offset, new)?;
         self.write_header(h, false)
@@ -424,8 +349,7 @@ mod tests {
         h.visit(Path::new("/a"), Path::new("/b"))?;
         h.visit(Path::new("/b"), Path::new("/c"))?;
         // A damaged old entry does not affect the immediate C -> B step.
-        h.file.seek(SeekFrom::Start(START))?;
-        h.file.write_all(&u64::MAX.to_le_bytes())?;
+        h.file.write_at(START, &u64::MAX.to_le_bytes())?;
         assert_eq!(h.select(true, 1)?.unwrap().entry.path, Path::new("/b"));
         assert!(h.select(true, 2).is_err());
         Ok(())
@@ -464,8 +388,7 @@ mod tests {
         h.write_header(header, true)?;
         assert!(h.select(true, 1).is_err());
         h.reset(Path::new("/b"))?;
-        h.file.seek(SeekFrom::Start(START))?;
-        h.file.write_all(&u64::MAX.to_le_bytes())?;
+        h.file.write_at(START, &u64::MAX.to_le_bytes())?;
         assert!(h.list(true, 1).is_err());
         Ok(())
     }
