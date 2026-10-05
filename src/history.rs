@@ -67,6 +67,10 @@ pub struct History {
 
     // Keep the lock descriptor alive for the complete operation.
     _lock: File,
+
+    /// Test-only injection at real write boundaries.
+    #[cfg(test)]
+    fault: Option<backend_tests::Fault>,
 }
 
 impl History {
@@ -89,6 +93,9 @@ impl History {
             .mode(0o600)
             .open(dir.join("history.lock"))?;
 
+        #[cfg(test)]
+        backend_tests::before_lock(&lock)?;
+
         if exclusive {
             lock.lock()?;
         } else {
@@ -106,7 +113,28 @@ impl History {
         lock.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
 
-        Ok(Self { file, _lock: lock })
+        Ok(Self {
+            file,
+            _lock: lock,
+            #[cfg(test)]
+            fault: None,
+        })
+    }
+
+    /// Trigger a configured error or process exit; absent from production builds.
+    #[cfg(test)]
+    fn checkpoint(&mut self, name: &str) -> io::Result<()> {
+        if let Some(fault) = &self.fault {
+            if fault.point == name {
+                match fault.action {
+                    backend_tests::Action::Error => {
+                        return Err(io::Error::other("Injected write failure"))
+                    }
+                    backend_tests::Action::Exit => std::process::exit(77),
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Read exactly the requested bytes, treating premature EOF as corruption.
@@ -167,8 +195,16 @@ impl History {
         // detection, not a crash recovery (there is no fsync).
         self.file.seek(SeekFrom::Start(16))?;
         self.file.write_all(&[1])?;
+        #[cfg(test)]
+        self.checkpoint("dirty-marker")?;
         self.file.seek(SeekFrom::Start(0))?;
         self.file.write_all(&b)?;
+        #[cfg(test)]
+        self.checkpoint(if dirty {
+            "dirty-header"
+        } else {
+            "final-header"
+        })?;
         if !dirty {
             self.file.seek(SeekFrom::Start(16))?;
             self.file.write_all(&[0])?;
@@ -219,8 +255,14 @@ impl History {
             .ok_or_else(invalid)?;
         self.file.seek(SeekFrom::Start(offset))?;
         self.file.write_all(&len.to_le_bytes())?;
+        #[cfg(test)]
+        self.checkpoint("record-length")?;
         self.file.write_all(b)?;
+        #[cfg(test)]
+        self.checkpoint("record-path")?;
         self.file.write_all(&len.to_le_bytes())?;
+        #[cfg(test)]
+        self.checkpoint("record-trailer")?;
         Ok(end)
     }
 
@@ -237,6 +279,8 @@ impl History {
         };
         self.write_header(h, true)?;
         self.file.set_len(START)?;
+        #[cfg(test)]
+        self.checkpoint("truncate")?;
         h.end = self.append(START, path)?;
         self.write_header(h, false)
     }
@@ -263,6 +307,8 @@ impl History {
         h.revision = h.revision.checked_add(1).ok_or_else(invalid)?;
         self.write_header(h, true)?;
         self.file.set_len(offset)?;
+        #[cfg(test)]
+        self.checkpoint("truncate")?;
         h.current = offset;
         h.end = self.append(offset, new)?;
         self.write_header(h, false)
@@ -441,3 +487,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/backend/mod.rs"]
+mod backend_tests;
