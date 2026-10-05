@@ -1,15 +1,17 @@
-use std::env;
-
-use clap::{Parser, Subcommand};
-
-use crate::config::Config;
-use crate::enums::{Shell, StackType};
-use crate::shell::generate_template;
-use crate::stack::get_or_create_stack_from_path;
-use crate::utils::get_tmp_dir;
+use crate::{
+    config::Config, enums::Shell, history::History, shell::generate_template, utils::get_tmp_dir,
+};
+use clap::{Parser, Subcommand, ValueEnum};
+use std::io::{self, Write};
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[clap(about, author, version)]
+#[command(
+    about = "Navigate backward and forward through visited directories",
+    author,
+    version
+)]
 pub struct Cli {
     #[command(subcommand)]
     cmd: Commands,
@@ -17,168 +19,210 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    #[command(about = "Operate on a stack")]
-    Stack {
-        #[arg(short, long, help = "Stack type to operate on")]
-        stack_type: StackType,
+    /// Private protocol used by shell adapters; compatibility is not guaranteed.
+    #[command(hide = true)]
+    Internal {
         #[command(subcommand)]
-        stack_cmd: StackCommands,
+        cmd: InternalCommand,
     },
-    #[command(about = "Navigate backward or forward in the history")]
-    Navigate {
-        #[command(subcommand)]
-        navigate_cmd: NavigateCommands,
-    },
-    #[command(about = "Initialize the shell script")]
+
+    /// Print the initialization script for a supported shell.
+    #[command(
+        long_about = "Print shell functions for tracking directory changes and navigating with b/f.
+
+Load the output in your shell configuration: eval \"$(dirstory init bash)\" for Bash,
+eval \"$(dirstory init zsh)\" for Zsh, or dirstory init fish | source for Fish."
+    )]
     Init {
-        #[arg(
-            short,
-            long,
-            default_value = "cd",
-            help = "Name of the command wrapper around cd"
-        )]
+        /// Name of the directory-change wrapper around the shell's cd builtin.
+        #[arg(short, long, default_value = "cd", value_name = "COMMAND")]
         command: String,
-        #[arg(name = "SHELL", help = "Shell to initialize")]
+
+        /// Shell for which to generate initialization code.
+        #[arg(value_name = "SHELL")]
         shell: Shell,
     },
 }
 
+/// Direction relative to the current history position.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Direction {
+    /// Earlier directory visits.
+    Back,
+
+    /// Later directory visits.
+    Forward,
+}
+
+impl Direction {
+    /// Whether traversal should follow earlier visits.
+    fn back(self) -> bool {
+        matches!(self, Self::Back)
+    }
+}
+
 #[derive(Debug, Subcommand)]
-enum StackCommands {
-    #[command(about = "Push a directory onto the stack")]
-    Push {
-        #[arg(name = "DIR", help = "Directory to push")]
-        dir: String,
-    },
-    #[command(about = "Pop directories from the stack")]
-    Pop {
-        #[arg(
-            name = "N",
-            default_value = "1",
-            help = "Number of directories to pop and print to stdout"
-        )]
+enum InternalCommand {
+    /// Select a navigation target without changing the current history position.
+    #[command(long_about = "Select a navigation target without changing history.
+
+Print REVISION:OFFSET on the first line and the target path on the second.
+The shell must perform cd successfully before passing the token to internal commit.
+
+Excess steps stop at the boundary; zero selects the current visit.
+An unavailable direction produces no output. Paths containing LF are unsupported.")]
+    Select {
+        /// Direction in which to navigate.
+        direction: Direction,
+
+        /// Number of visits to move through.
+        #[arg(default_value = "1", value_name = "N")]
         n: usize,
     },
-    #[command(about = "List directories in the stack")]
+
+    /// Initialize missing history, leaving existing valid history unchanged.
+    Ensure {
+        /// Current directory used for the initial visit.
+        path: PathBuf,
+    },
+
+    /// Discard history and replace it with a single visit.
+    #[command(long_about = "Discard all visits and initialize history at PATH.
+
+This also repairs invalid or interrupted history; discarded visits cannot be recovered.")]
+    Reset {
+        /// Directory that becomes the only visit and current position.
+        path: PathBuf,
+    },
+
+    /// Record a successful directory change and discard the forward branch.
+    #[command(
+        long_about = "Record a directory change after the shell has successfully performed cd.
+
+If the stored current directory differs from --from, restart history at --from.
+An unchanged directory adds no visit; a new visit discards the forward branch."
+    )]
+    Visit {
+        /// Working directory before the successful cd.
+        #[arg(long, value_name = "PATH")]
+        from: PathBuf,
+
+        /// Working directory after the successful cd.
+        #[arg(long, value_name = "PATH")]
+        to: PathBuf,
+    },
+
+    /// Print up to N visits in the chosen direction, nearest first.
+    #[command(
+        long_about = "Print up to N neighboring visits, one path per line, nearest first.
+
+The current visit is excluded. Listing does not modify history."
+    )]
     List {
-        #[arg(name = "N", help = "Number of directories to list")]
-        n: usize,
-    },
-    #[command(about = "Empty the stack")]
-    Empty,
-}
+        /// Side of the current position to list.
+        direction: Direction,
 
-#[derive(Debug, Subcommand)]
-enum NavigateCommands {
-    #[command(about = "Go back in the history and print the current directory")]
-    Back {
-        #[arg(
-            name = "N",
-            default_value = "1",
-            help = "Number of directories to go back"
-        )]
+        /// Maximum number of visits to print; zero prints nothing.
+        #[arg(value_name = "N")]
         n: usize,
     },
-    #[command(about = "Go forward in the history and print the current directory")]
-    Forward {
-        #[arg(
-            name = "N",
-            default_value = "1",
-            help = "Number of directories to go forward"
-        )]
-        n: usize,
+
+    /// Confirm a selection after the shell has successfully changed directory.
+    #[command(
+        long_about = "Move the history position to a previously selected visit.
+
+TOKEN must be REVISION:OFFSET returned by internal select.
+A stale token is rejected; this command does not undo a cd already performed by the shell."
+    )]
+    Commit {
+        /// Selection token returned by internal select.
+        token: String,
     },
 }
 
-fn match_navigate_commands(navigate_cmd: &NavigateCommands, config: Config) {
-    let prefix = get_tmp_dir(config.mode) + "/";
-    let current_dir = env::current_dir().unwrap();
-    let pwd = current_dir.to_str().unwrap().to_string();
-
-    let back_stack_path = prefix.clone() + StackType::Backward.as_str();
-    let mut backward_stack = get_or_create_stack_from_path(&back_stack_path);
-
-    let forward_stack_path = prefix + StackType::Forward.as_str();
-    let mut forward_stack = get_or_create_stack_from_path(&forward_stack_path);
-
-    match navigate_cmd {
-        NavigateCommands::Back { n } => {
-            let popped = backward_stack.pop(*n);
-            if popped.is_empty() {
-                return;
-            }
-
-            forward_stack.push(&pwd);
-            for dir in &popped {
-                if dir == popped.last().unwrap() {
-                    println!("{}", dir);
-                    return;
-                }
-                forward_stack.push(dir);
-            }
-        }
-        NavigateCommands::Forward { n } => {
-            let popped = forward_stack.pop(*n);
-            if popped.is_empty() {
-                return;
-            }
-
-            backward_stack.push(&pwd);
-            for dir in &popped {
-                if dir == popped.last().unwrap() {
-                    println!("{}", dir);
-                    return;
-                }
-                backward_stack.push(dir);
-            }
-        }
+/// Reject paths that cannot be represented by the line-based shell protocol.
+fn check_path(path: &std::path::Path) -> io::Result<()> {
+    if path.as_os_str().as_bytes().contains(&b'\n') {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Paths containing LF are not supported by the shell protocol",
+        ))
+    } else {
+        Ok(())
     }
 }
 
-fn match_stack_commands(stack_cmd: &StackCommands, stack_type: &StackType, config: Config) {
-    let stack_path = get_tmp_dir(config.mode) + "/" + stack_type.as_str();
-    let mut stack = get_or_create_stack_from_path(&stack_path);
-
-    match stack_cmd {
-        StackCommands::Push { dir } => {
-            stack.push(dir);
-        }
-        StackCommands::Pop { n } => {
-            let popped = stack.pop(*n);
-            for dir in &popped {
-                println!("{}", dir);
-            }
-        }
-        StackCommands::List { n } => {
-            let dirs = stack.get_n(*n);
-            for dir in &dirs {
-                println!("{}", dir);
-            }
-        }
-        StackCommands::Empty => {
-            stack.empty().unwrap();
-        }
-    }
+fn print_path(path: &std::path::Path) -> io::Result<()> {
+    check_path(path)?;
+    let mut out = io::stdout().lock();
+    out.write_all(path.as_os_str().as_bytes())?;
+    out.write_all(b"\n")
 }
 
 impl Cli {
-    pub fn run(&self) {
-        let config = Config::new();
+    pub fn run(&self) -> io::Result<()> {
+        if let Commands::Init { command, shell } = &self.cmd {
+            println!("{}", generate_template(shell, command));
+            return Ok(());
+        }
 
-        match &self.cmd {
-            Commands::Stack {
-                stack_type,
-                stack_cmd,
-            } => {
-                match_stack_commands(stack_cmd, stack_type, config);
+        let Commands::Internal { cmd } = &self.cmd else {
+            unreachable!();
+        };
+
+        let config = Config::new();
+        let dir = PathBuf::from(get_tmp_dir(config.mode));
+        let exclusive = !matches!(
+            cmd,
+            InternalCommand::Select { .. } | InternalCommand::List { .. }
+        );
+        let mut h = History::open(&dir, exclusive)?;
+
+        match cmd {
+            InternalCommand::Select { direction, n } => {
+                if let Some(s) = h.select(direction.back(), *n)? {
+                    check_path(&s.entry.path)?;
+                    println!("{}:{}", s.revision, s.entry.offset);
+                    print_path(&s.entry.path)?;
+                }
             }
-            Commands::Navigate { navigate_cmd } => {
-                match_navigate_commands(navigate_cmd, config);
+            InternalCommand::Ensure { path } => {
+                check_path(path)?;
+                h.ensure(path)?;
             }
-            Commands::Init { command, shell } => {
-                let template = generate_template(shell, command);
-                println!("{}", template);
+            InternalCommand::Reset { path } => {
+                check_path(path)?;
+                h.reset(path)?;
+            }
+            InternalCommand::Visit { from, to } => {
+                check_path(from)?;
+                check_path(to)?;
+                h.visit(from, to)?;
+            }
+            InternalCommand::List { direction, n } => {
+                let entries = h.list(direction.back(), *n)?;
+
+                for e in &entries {
+                    check_path(&e.path)?;
+                }
+
+                for e in entries {
+                    print_path(&e.path)?;
+                }
+            }
+            InternalCommand::Commit { token } => {
+                let parse = || -> Option<(u64, u64)> {
+                    let (r, o) = token.split_once(':')?;
+                    Some((r.parse().ok()?, o.parse().ok()?))
+                };
+
+                let (revision, offset) = parse().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "Invalid selection token")
+                })?;
+                h.commit(revision, offset)?;
             }
         }
+
+        Ok(())
     }
 }
