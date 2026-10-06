@@ -185,18 +185,29 @@ class ShellCase(unittest.TestCase):
             self.assertEqual(state, states[6], details)
 
     def test_failed_cd_preserves_forward_history(self):
-        states, details = self.run_script(["cd a", "cd ../b", "b", "cd ../missing"])
+        history = self.root / "runtime/dirstory/scenario/history.bin"
+        saved = self.root / "before-cd-failure.bin"
+        states, details = self.run_script(["cd a", "cd ../b", "b",
+            f"cp {shlex.quote(str(history))} {shlex.quote(str(saved))}", "cd ../missing"])
+        self.assertEqual(history.read_bytes(), saved.read_bytes(), details)
         self.assertNotEqual(states[-1].status, 0, details)
         self.assertEqual(states[-1].pwd, states[-2].pwd, details)
         self.assertEqual(states[-1].back, states[-2].back, details)
         self.assertEqual(states[-1].forward, states[-2].forward, details)
 
     def test_deleted_navigation_target(self):
-        states, details = self.run_script(["cd a", "cd ../b", "b", f"rmdir {shlex.quote(str(self.root / 'b'))}", "f"])
-        self.assertNotEqual(states[-1].status, 0, details)
-        self.assertEqual(states[-1].pwd, states[-2].pwd, details)
-        self.assertEqual(states[-1].back, states[-2].back, details)
-        self.assertEqual(states[-1].forward, states[-2].forward, details)
+        history = self.root / "runtime/dirstory/scenario/history.bin"
+        saved = self.root / "before-failure.bin"
+        after = self.root / "after-failure.bin"
+        states, details = self.run_script(["cd a", "cd ../b", "b",
+            f"rmdir {shlex.quote(str(self.root / 'b'))}",
+            f"cp {shlex.quote(str(history))} {shlex.quote(str(saved))}", "f",
+            f"cp {shlex.quote(str(history))} {shlex.quote(str(after))}", "mkdir ../b", "f"])
+        self.assertNotEqual(states[5].status, 0, details)
+        self.assertEqual((states[5].pwd, states[5].back, states[5].forward),
+                         (states[4].pwd, states[4].back, states[4].forward), details)
+        self.assertEqual(after.read_bytes(), saved.read_bytes(), details)
+        self.assertEqual(states[-1], states[1], details)
 
     def test_invalid_arguments_preserve_history(self):
         commands = ["cd a", "cd ../b"] + [f"{cmd} {arg}" for cmd in ("b", "f") for arg in ("-1", "nope", "--unknown", "-l nope")]
@@ -211,6 +222,35 @@ class ShellCase(unittest.TestCase):
         self.assertEqual(states[0], states[2], details)
         self.assert_state(states[3], "", (), ("a",), details=details)
         self.assertEqual(states[0], states[4], details)
+
+    def test_same_directory_in_middle_preserves_file_and_future(self):
+        history = self.root / "runtime/dirstory/scenario/history.bin"
+        saved = self.root / "before-noop.bin"
+        states, details = self.run_script(["cd a", "cd ../b", "cd ../c", "b",
+            f"cp {shlex.quote(str(history))} {shlex.quote(str(saved))}", "cd .", "b 0", "f 0"])
+        for state in states[4:]:
+            self.assertEqual(state, states[3], details)
+        self.assertEqual(history.read_bytes(), saved.read_bytes(), details)
+
+    def test_repeated_paths_are_independent_visits(self):
+        states, details = self.run_script(["cd a", "cd ../b", "cd ../a", "b 2", "f", "f"])
+        self.assert_state(states[2], "a", ("b", "a", ""), details=details)
+        self.assert_state(states[3], "a", ("",), ("b", "a"), details=details)
+        self.assert_state(states[4], "b", ("a", ""), ("a",), details=details)
+        self.assertEqual(states[5], states[2], details)
+
+    def test_symlink_aliases_remain_distinct_visits(self):
+        (self.root / "other-link").symlink_to(self.root / "target", target_is_directory=True)
+        args = [str(self.root / name) for name in ("link", "other-link")]
+        cd = "cd" if self.shell == "fish" else self.builtin()
+        reference, details = self.run_script([f"{cd} {shlex.quote(path)}" for path in args],
+                                            initialize=False, history=False)
+        # Verify the shell's own logical paths rather than canonicalizing in tests.
+        self.assertEqual([s.pwd for s in reference], args, details)
+        states, details = self.run_script([f"cd {shlex.quote(path)}" for path in args] + ["b", "f"])
+        self.assert_state(states[1], "other-link", ("link", ""), details=details)
+        self.assert_state(states[2], "link", ("",), ("other-link",), details=details)
+        self.assertEqual(states[3], states[1], details)
 
     def test_custom_wrapper(self):
         states, details = self.run_script(["cd a", "cdir ../b", "b", "f"], name="cdir")

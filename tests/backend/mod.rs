@@ -6,6 +6,8 @@ use std::fs;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+mod rules;
+
 /// Outcome injected by the test storage, never by history logic.
 #[derive(Clone, Copy)]
 enum Action {
@@ -110,6 +112,7 @@ fn remains_valid(mutation: usize, total: usize, timing: Timing) -> bool {
 struct Model {
     paths: Vec<PathBuf>,
     cursor: usize,
+    revision: u64,
 }
 
 impl Model {
@@ -117,17 +120,32 @@ impl Model {
         Self {
             paths: vec![path],
             cursor: 0,
+            revision: 1,
+        }
+    }
+
+    fn reset(&mut self, path: PathBuf) {
+        let revision = self.revision + 1;
+        *self = Self::new(path);
+        self.revision = revision;
+    }
+
+    fn commit(&mut self, cursor: usize) {
+        if self.cursor != cursor {
+            self.cursor = cursor;
+            self.revision += 1;
         }
     }
 
     fn visit(&mut self, old: PathBuf, new: PathBuf) {
-        if self.paths[self.cursor] != old {
-            *self = Self::new(old.clone());
+        if self.paths[self.cursor].as_os_str() != old.as_os_str() {
+            self.reset(old.clone());
         }
-        if old != new {
+        if old.as_os_str() != new.as_os_str() {
             self.paths.truncate(self.cursor + 1);
             self.paths.push(new);
             self.cursor += 1;
+            self.revision += 1;
         }
     }
 
@@ -167,6 +185,8 @@ enum Op {
     Ensure(String),
     List(bool, usize),
     Stale,
+    Branch { name: String, steps: usize },
+    Revisit(usize),
 }
 
 fn operations() -> impl Strategy<Value = Vec<Op>> {
@@ -180,7 +200,9 @@ fn operations() -> impl Strategy<Value = Vec<Op>> {
         )
             .prop_map(|(back, n, commit)| Op::Select { back, n, commit }),
         path.clone().prop_map(Op::Reset),
-        path.prop_map(Op::Ensure),
+        path.clone().prop_map(Op::Ensure),
+        (path, 0usize..140).prop_map(|(name, steps)| Op::Branch { name, steps }),
+        (0usize..140).prop_map(Op::Revisit),
         (any::<bool>(), 0usize..140).prop_map(|(b, n)| Op::List(b, n)),
         Just(Op::Stale),
     ];
@@ -218,10 +240,10 @@ proptest! {
                     prop_assert_eq!(selected.as_ref().map(|s|s.entry.path.clone()), target.map(|i|model.paths[i].clone()));
                     prop_assert_eq!(fs::read(dir.path().join("history.bin")).unwrap(),before);
                     if *commit {
-                        if let Some(s) = selected { history.commit(s.revision,s.entry.offset).unwrap(); model.cursor=target.unwrap(); }
+                        if let Some(s) = selected { history.commit(s.revision,s.entry.offset).unwrap(); model.commit(target.unwrap()); }
                     }
                 }
-                Op::Reset(name) => { let path=PathBuf::from(format!("/{name}")); history.reset(&path).unwrap();model=Model::new(path); }
+                Op::Reset(name) => { let path=PathBuf::from(format!("/{name}")); history.reset(&path).unwrap();model.reset(path); }
                 Op::Ensure(name) => { history.ensure(Path::new(&format!("/{name}"))).unwrap(); }
                 Op::List(back,n) => {
                     prop_assert_eq!(history.list(*back,*n).unwrap().into_iter().map(|e|e.path).collect::<Vec<_>>(),model.list(*back,*n));
@@ -229,13 +251,31 @@ proptest! {
                 Op::Stale => {
                     let s=history.select(true,0).unwrap().unwrap();
                     let old=model.paths[model.cursor].clone(); let new=PathBuf::from("/changed-revision");
-                    history.reset(&new).unwrap(); model=Model::new(new);
+                    history.reset(&new).unwrap(); model.reset(new);
                     prop_assert!(history.commit(s.revision,s.entry.offset).is_err(),"stale selection from {old:?}");
+                }
+                Op::Branch { name, steps } => {
+                    if let Some(s) = history.select(true, *steps).unwrap() {
+                        history.commit(s.revision, s.entry.offset).unwrap();
+                        model.commit(model.target(true, *steps).unwrap());
+                    }
+                    let old = model.paths[model.cursor].clone();
+                    let new = PathBuf::from(format!("/{name}"));
+                    history.visit(&old, &new).unwrap();
+                    model.visit(old, new);
+                }
+                Op::Revisit(n) => {
+                    let old = model.paths[model.cursor].clone();
+                    let new = model.paths[*n % model.paths.len()].clone();
+                    history.visit(&old, &new).unwrap();
+                    model.visit(old, new);
                 }
             }
 
             if step % 8 == 0 { drop(history); history=History::open(dir.path(),true).unwrap(); }
-            prop_assert_eq!(history.select(true,0).unwrap().unwrap().entry.path,model.paths[model.cursor].clone());
+            let current = history.select(true,0).unwrap().unwrap();
+            prop_assert_eq!(current.entry.path,model.paths[model.cursor].clone());
+            prop_assert_eq!(current.revision,model.revision);
             for back in [true,false] {
                 prop_assert_eq!(history.list(back,usize::MAX).unwrap().into_iter().map(|e|e.path).collect::<Vec<_>>(),model.list(back,usize::MAX));
             }

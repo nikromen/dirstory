@@ -195,6 +195,7 @@ impl<S: Storage> History<S> {
         Ok(end)
     }
 
+    /// Replace all visits with one path, advancing the revision to stale old tokens.
     pub fn reset(&mut self, path: &Path) -> io::Result<()> {
         let revision = if self.file.length()? >= START {
             self.number(40)?.checked_add(1).unwrap_or(1)
@@ -212,6 +213,7 @@ impl<S: Storage> History<S> {
         self.write_header(h, false)
     }
 
+    /// Initialize an empty file or validate existing history without changing it.
     pub fn ensure(&mut self, path: &Path) -> io::Result<()> {
         if self.file.length()? == 0 {
             self.reset(path)
@@ -220,14 +222,23 @@ impl<S: Storage> History<S> {
         }
     }
 
+    /// Record an observed directory change, discarding visits after the cursor.
+    ///
+    /// Paths are compared as supplied, without canonicalization or existence
+    /// checks. Nonconsecutive repeats remain distinct visits. If current equals
+    /// `old` and `old == new`, this is a no-op, including the revision and branch.
+    ///
+    /// A current path different from `old` resets history to `old` first. Even
+    /// when `old == new`, this mismatch resets history to a single visit.
+    /// Call only for successful or subsequently observed shell directory changes.
     pub fn visit(&mut self, old: &Path, new: &Path) -> io::Result<()> {
         self.ensure(old)?;
         let mut h = self.header()?;
-        if self.entry(h.current, h.end)?.path != old {
+        if self.entry(h.current, h.end)?.path.as_os_str() != old.as_os_str() {
             self.reset(old)?;
             h = self.header()?;
         }
-        if old == new {
+        if old.as_os_str() == new.as_os_str() {
             return Ok(());
         }
         let offset = self.entry(h.current, h.end)?.end;
@@ -264,6 +275,10 @@ impl<S: Storage> History<S> {
     }
 
     /// Choose a target without updating history; `back` selects earlier visits.
+    ///
+    /// Zero selects current; excess steps stop at the boundary. A nonzero request
+    /// at that boundary returns None. No filesystem checks or missing-path skips
+    /// are performed: the shell must successfully cd before confirming the token.
     pub fn select(&mut self, back: bool, n: usize) -> io::Result<Option<Selection>> {
         let h = self.header()?;
         let mut e = self.entry(h.current, h.end)?;
@@ -292,6 +307,11 @@ impl<S: Storage> History<S> {
     }
 
     /// Confirm a selected offset after the shell has successfully performed cd.
+    ///
+    /// A moved cursor advances the revision but preserves every visit. Confirming
+    /// current is a no-op. Stale tokens fail without writes; this cannot undo a cd
+    /// already performed by the shell. Selection and confirmation do not record
+    /// new visits, including when the target has the same path as another visit.
     pub fn commit(&mut self, revision: u64, offset: u64) -> io::Result<()> {
         let mut h = self.header()?;
         if h.revision != revision {

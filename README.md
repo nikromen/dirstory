@@ -87,6 +87,11 @@ and similarly to go forward by one step:
 $ f
 ```
 
+Changing directory after going back replaces the forward history. Staying in the
+same directory leaves it unchanged; revisiting a directory later creates a separate
+visit. If a saved directory is unavailable, navigation fails and keeps the visit
+so you can retry after restoring it.
+
 ### Command name specification
 
 Use `dirstory init <SHELL> --command uwu` to name your directory-change command `uwu`.
