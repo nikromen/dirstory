@@ -17,6 +17,8 @@ import tempfile
 import time
 import unittest
 
+from hooks import BashScenarios, FishScenarios, HookScenarios, ZshScenarios
+
 SHELLS = ("sh", "dash", "bash", "zsh", "fish")
 MARKER = "__DIRSTORY_SNAPSHOT__"
 try:
@@ -57,6 +59,8 @@ class ShellCase(unittest.TestCase):
     """One shell and scenario, with its own configuration and runtime files."""
 
     shell = ""
+    timeout = TIMEOUT
+    parse_snapshot = staticmethod(parse_states)
 
     def setUp(self):
         if not shutil.which(self.shell):
@@ -210,14 +214,16 @@ class ShellCase(unittest.TestCase):
 
     def test_custom_wrapper(self):
         states, details = self.run_script(["cd a", "cdir ../b", "b", "f"], name="cdir")
-        self.assert_state(states[0], "a", details=details)  # Ordinary cd remains unwrapped.
-        self.assert_state(states[1], "b", ("a",), details=details)
-        self.assert_state(states[2], "a", (), ("b",), details=details)
+        prior = ("",) if self.shell in ("bash", "zsh", "fish") else ()
+        self.assert_state(states[0], "a", prior, details=details)
+        self.assert_state(states[1], "b", ("a",) + prior, details=details)
+        self.assert_state(states[2], "a", prior, ("b",), details=details)
         self.assertEqual(states[1], states[3], details)
 
     def test_native_cd_arguments_and_symlinks(self):
         args = ["a", "../b", "", "-", "-L " + shlex.quote(str(self.root / "link")), "-P " + shlex.quote(str(self.root / "link")), "../missing", "--bad-option"]
-        reference, _ = self.run_script([f"{self.builtin()} {arg}" for arg in args], initialize=False, history=False)
+        reference_cd = "cd" if self.shell == "fish" else self.builtin()
+        reference, _ = self.run_script([f"{reference_cd} {arg}" for arg in args], initialize=False, history=False)
         actual, details = self.run_script([f"cd {arg}" for arg in args])
         visits = [str(self.root)]
         for expected, observed in zip(reference, actual):
@@ -325,7 +331,9 @@ def main():
     for shell in SHELLS:
         if selected and shell != selected:
             continue
-        case = type(shell, (ShellCase,), {"shell": shell})
+        extra = {"bash": BashScenarios, "zsh": ZshScenarios, "fish": FishScenarios}.get(shell)
+        bases = (extra, HookScenarios, ShellCase) if extra else (ShellCase,)
+        case = type(shell, bases, {"shell": shell})
         for name in unittest.defaultTestLoader.getTestCaseNames(case):
             if not pattern or pattern in f"{shell}/{name}":
                 suite.addTest(case(name))

@@ -34,7 +34,7 @@ Load the output in your shell configuration: eval \"$(dirstory init bash)\" for 
 eval \"$(dirstory init zsh)\" for Zsh, or dirstory init fish | source for Fish."
     )]
     Init {
-        /// Name of the directory-change wrapper around the shell's cd builtin.
+        /// Directory-change command: wrapper in Bash/sh, convenience in Zsh/Fish.
         #[arg(short, long, default_value = "cd", value_name = "COMMAND")]
         command: String,
 

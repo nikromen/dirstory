@@ -17,6 +17,7 @@ It's very similar to navigating back and forth between web pages in your web bro
 - [Installation](#installation)
 - [Usage](#usage)
   - [Command name specification](#command-name-specification)
+  - [Limitations](#limitations)
 
 <!-- tocstop -->
 
@@ -27,8 +28,8 @@ It's very similar to navigating back and forth between web pages in your web bro
 2. Setup dirstory for your shell
 
    Initialize dirstory for your shell by adding the output of `dirstory init <SHELL>` in
-   your shell's configuration file. If you want to use different command than `cd` for the
-   history management, you can use `dirstory init <SHELL> --command <COMMAND>`. More in
+   your shell's configuration file. To add a custom directory-change command, use
+   `dirstory init <SHELL> --command <COMMAND>`. More in
    [command-name-specification](#command-name-specification).
 
    <details>
@@ -88,6 +89,13 @@ $ f
 
 ### Command name specification
 
-If you do not prefer to have added wrapper around `cd` command, you can specify your own command
-name. For example, if you want to use `uwu` command instead of `cd`, add `--command uwu` to the
-init command.
+Use `dirstory init <SHELL> --command uwu` to name your directory-change command `uwu`.
+In Bash and sh, use `uwu` instead of `cd`. Zsh and Fish also track changes made
+through ordinary `cd`.
+
+### Limitations
+
+- Multiple changes bypassing the custom command before the next prompt may miss intermediate visits.
+- Zsh does not track `cd -q`.
+- Fish may miss intermediate visits when several directory changes occur together.
+- sh tracks only changes made through the configured directory-change command.
