@@ -45,7 +45,9 @@ impl Fixture {
     }
 
     fn data(&self) -> PathBuf {
-        self.root.path().join("dirstory/integration/history.bin")
+        self.root
+            .path()
+            .join("dirstory/tmux-integration/history.bin")
     }
 }
 
@@ -399,4 +401,27 @@ fn config_home_fallback_and_non_utf8_paths_work() {
     let mut command = f.command(&["internal", "ensure", "/a"]);
     command.env("XDG_CONFIG_HOME", dir);
     assert!(bounded_output(command).status.success());
+}
+
+#[test]
+fn modes_do_not_collide_and_tmux_reinitialization_shares_history() {
+    let f = Fixture::new();
+    let config = f.root.path().join("config/dirstory.json");
+    fs::write(&config, r#"{"mode":"pid"}"#).unwrap();
+    let mut command = f.command(&["internal", "ensure", "/pid"]);
+    command.env("DIRSTORY_SHELL_PID", "123");
+    assert!(bounded_output(command).status.success());
+    fs::write(&config, r#"{"mode":"tmux"}"#).unwrap();
+    for path in ["/tmux", "/ignored"] {
+        let mut command = f.command(&["internal", "ensure", path]);
+        command.env("TMUX_PANE", "%123");
+        assert!(bounded_output(command).status.success());
+    }
+    let mut command = f.command(&["internal", "select", "back", "0"]);
+    command.env("TMUX_PANE", "%123");
+    assert!(bounded_output(command).stdout.ends_with(b"/tmux\n"));
+    fs::write(&config, r#"{"mode":"pid"}"#).unwrap();
+    let mut command = f.command(&["internal", "select", "back", "0"]);
+    command.env("DIRSTORY_SHELL_PID", "123");
+    assert!(bounded_output(command).stdout.ends_with(b"/pid\n"));
 }

@@ -207,7 +207,7 @@ class ShellCase(unittest.TestCase):
             self.assertEqual(state, states[6], details)
 
     def test_failed_cd_preserves_forward_history(self):
-        history = self.root / "runtime/dirstory/scenario/history.bin"
+        history = self.root / "runtime/dirstory/tmux-scenario/history.bin"
         saved = self.root / "before-cd-failure.bin"
         states, details = self.run_script(["cd a", "cd ../b", "b",
             f"cp {shlex.quote(str(history))} {shlex.quote(str(saved))}", "cd ../missing"])
@@ -218,7 +218,7 @@ class ShellCase(unittest.TestCase):
         self.assertEqual(states[-1].forward, states[-2].forward, details)
 
     def test_deleted_navigation_target(self):
-        history = self.root / "runtime/dirstory/scenario/history.bin"
+        history = self.root / "runtime/dirstory/tmux-scenario/history.bin"
         saved = self.root / "before-failure.bin"
         after = self.root / "after-failure.bin"
         states, details = self.run_script(["cd a", "cd ../b", "b",
@@ -275,7 +275,7 @@ class ShellCase(unittest.TestCase):
         self.assertEqual(states[0], states[4], details)
 
     def test_same_directory_in_middle_preserves_file_and_future(self):
-        history = self.root / "runtime/dirstory/scenario/history.bin"
+        history = self.root / "runtime/dirstory/tmux-scenario/history.bin"
         saved = self.root / "before-noop.bin"
         states, details = self.run_script(["cd a", "cd ../b", "cd ../c", "b",
             f"cp {shlex.quote(str(history))} {shlex.quote(str(saved))}", "cd .", "b 0", "f 0"])
@@ -412,6 +412,62 @@ class ShellCase(unittest.TestCase):
 
     def test_pid_session_isolation(self):
         self.session_isolation("pid")
+
+    def test_same_tty_shell_sharing(self):
+        for mode, count in (("tty", 1), ("pid", 2)):
+            with self.subTest(mode=mode):
+                self.configure(mode)
+                runtime = self.root / ("runtime-" + mode)
+                runtime.mkdir()
+                env = dict(self.env, XDG_RUNTIME_DIR=str(runtime))
+                master, slave = pty.openpty()
+                try:
+                    for directory in ("a", "b"):
+                        destination = "a" if directory == "a" else "../b"
+                        script = self.init() + f"\ncd {destination}\ntrue"
+                        result = subprocess.run(
+                            [self.shell, "-c", script],
+                            cwd=self.root if directory == "a" else self.root / "a", env=env,
+                            stdin=slave, capture_output=True, timeout=TIMEOUT)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    files = list((runtime / "dirstory").glob("*/history.bin"))
+                    self.assertEqual(len(files), count)
+                    if mode == "tty":
+                        result = subprocess.run(
+                            [BINARY, "internal", "list", "back", "10"],
+                            env=env, stdin=slave, capture_output=True,
+                            check=True, timeout=TIMEOUT)
+                        self.assertIn(os.fsencode(self.root / "a"), result.stdout.splitlines())
+                finally:
+                    os.close(slave)
+                    os.close(master)
+
+    def test_redirected_tty_input_creates_no_session(self):
+        self.configure("tty")
+        source = self.root / "input"
+        source.write_text("")
+        with source.open() as stdin:
+            for redirected in (stdin, subprocess.DEVNULL, subprocess.PIPE):
+                result = subprocess.run(
+                    [BINARY, "internal", "ensure", str(self.root)],
+                    env=self.env, stdin=redirected, capture_output=True, timeout=TIMEOUT)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / "runtime/dirstory").exists())
+
+    def test_private_permissions_with_permissive_umask(self):
+        script = "umask 000\n" + self.init() + "\ncd a\ntrue"
+        result = subprocess.run([self.shell, "-c", script], cwd=self.root,
+                                env=self.env, capture_output=True, timeout=TIMEOUT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        base = self.root / "runtime/dirstory"
+        for path in (base, base / "tmux-scenario"):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        for path in (base / "tmux-scenario").iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            path.chmod(0o666)
+        self.run_script([])
+        for path in (base / "tmux-scenario").iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_tmux_session_isolation(self):
         for pane, path in (("%first", "/first"), ("%second", "/second")):

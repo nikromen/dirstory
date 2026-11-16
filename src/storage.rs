@@ -2,7 +2,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::os::unix::fs::{FileExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 /// Operations needed by the history encoder and navigator.
@@ -34,7 +34,10 @@ pub struct FileStorage {
 impl FileStorage {
     /// Create private session files and acquire the requested advisory lock.
     pub(super) fn open(dir: &Path, exclusive: bool) -> io::Result<Self> {
-        fs::DirBuilder::new().recursive(true).create(dir)?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
 
         let lock = Self::open_file(&dir.join("history.lock"))?;

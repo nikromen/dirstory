@@ -31,7 +31,7 @@ file, or an empty object uses the defaults. Omitted settings also use defaults.
 : The default. Identify history by the terminal associated with standard input.
 Shells using the same terminal identifier share history, including a new shell
 on that terminal. The terminal identifier must be available to commands accessing
-history.
+history. Redirected standard input is an error and creates no session.
 
 **mode: tmux**
 : Identify history by the tmux pane from **TMUX_PANE**. Shells in the same pane
