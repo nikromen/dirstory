@@ -200,7 +200,9 @@ class PickerScenarios:
             self.assertIsNone(child.poll(), "Enter accepted a hidden selection")
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
             os.killpg(child.pid, signal.SIGWINCH)
-            self.terminal_until(master, b"Directory")
+            # Drain through the footer so a full redraw cannot fill the PTY
+            # while communicate() waits only on the separate protocol pipes.
+            self.screen_until(master, Screen(), lambda text: "Directory history" in text and "Esc: cancel" in text)
             os.write(master, b"\r")
             out, err = child.communicate(timeout=self.timeout)
             states = self.parse_snapshot(os.fsdecode(out))

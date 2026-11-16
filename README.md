@@ -21,7 +21,14 @@ It's very similar to navigating back and forth between web pages in your web bro
 
 ## Installation
 
-1. Install binary
+1. Install from COPR:
+
+   ```bash
+   sudo dnf copr enable nikromen/dirstory
+   sudo dnf install dirstory
+   ```
+
+   For the development version, install `dirstory-git` instead.
 
 2. Setup dirstory for your shell
 

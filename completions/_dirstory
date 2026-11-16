@@ -1,0 +1,58 @@
+#compdef dirstory b f dh
+
+_dirstory() {
+    local name=${words[1]:t} index word
+    local shell_seen=0 command_seen=0 needs_command=0
+    local -a choices
+
+    case "$name" in
+        b|f)
+            (( CURRENT == 2 )) || return 0
+            compadd -- -h --help -l --list -i --interactive
+            return ;;
+        dh)
+            (( CURRENT == 2 )) || return 0
+            compadd -- -h --help --reset
+            return ;;
+    esac
+
+    if (( CURRENT == 2 )); then
+        compadd -- init -h --help -V --version
+        return
+    fi
+    [[ ${words[2]} == init ]] || return 0
+
+    for ((index=3; index<CURRENT; index++)); do
+        word=${words[index]}
+        if (( needs_command )); then
+            needs_command=0
+            continue
+        fi
+
+        case "$word" in
+            -c|--command)
+                (( command_seen == 0 )) || return 0
+                command_seen=1
+                needs_command=1 ;;
+            --command=*)
+                (( command_seen == 0 )) || return 0
+                command_seen=1 ;;
+            sh|bash|zsh|fish)
+                (( shell_seen == 0 )) || return 0
+                shell_seen=1 ;;
+            *) return 0 ;;
+        esac
+    done
+
+    if (( needs_command )); then
+        compadd -- cd
+        return
+    fi
+
+    choices=(-h --help)
+    (( shell_seen )) || choices+=(sh bash zsh fish)
+    (( command_seen )) || choices+=(-c --command)
+    compadd -- "${choices[@]}"
+}
+
+_dirstory "$@"
