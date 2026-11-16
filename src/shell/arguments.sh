@@ -8,6 +8,27 @@ _dirstory_parse() {
     _dirstory_action=navigate
     _dirstory_count=1
 
+    if [ "$dirstory_name" = dh ]; then
+        case "$#:${1-}" in
+            0:) _dirstory_action=pick; return 0 ;;
+            1:-h|1:--help)
+                _dirstory_action=help
+                printf '%s\n' 'Usage: dh [-h|--help]' 'Open interactive directory history.'
+                return 0 ;;
+            *) printf '%s\n' 'dirstory: invalid arguments; use dh --help' >&2; return 2 ;;
+        esac
+    fi
+
+    case "${1-}" in
+        -i|--interactive)
+            if [ "$#" -ne 1 ]; then
+                printf 'dirstory: invalid arguments; use %s --help\n' "$dirstory_name" >&2
+                return 2
+            fi
+            _dirstory_action=pick
+            return 0 ;;
+    esac
+
     # Recognize help and list options before validating the optional count.
     case "${1-}" in
         -h|--help)

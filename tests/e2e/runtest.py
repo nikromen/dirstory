@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 
+from picker import PickerScenarios
 from hooks import BashScenarios, FishScenarios, HookScenarios, ZshScenarios
 
 SHELLS = ("sh", "dash", "bash", "zsh", "fish")
@@ -263,8 +264,8 @@ class ShellCase(unittest.TestCase):
         else:
             spy = "dirstory() { printf 'backend-called\\n' >> calls; return 1; }"
             pending = "_dirstory_last_pwd=/pending"
-        states, details = self.run_script([spy, pending, "b nope", "f 1 2", "b --help", "f -h"], history=False)
-        self.assertEqual([s.status for s in states[2:]], [2, 2, 0, 0], details)
+        states, details = self.run_script([spy, pending, "b nope", "f 1 2", "b -i 2", "f --interactive -l", "dh x", "dh -i", "dh --help x", "b --help", "f -h", "dh -h", "dh --help"], history=False)
+        self.assertEqual([s.status for s in states[2:]], [2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0], details)
         self.assertFalse((self.root / "calls").exists(), details)
 
     def test_same_directory_and_reinitialization(self):
@@ -492,9 +493,9 @@ def main():
             continue
         extra = {"bash": BashScenarios, "zsh": ZshScenarios, "fish": FishScenarios}.get(shell)
         if extra:
-            bases = (extra, HookScenarios, ShellCase)
+            bases = (extra, HookScenarios, PickerScenarios, ShellCase)
         else:
-            bases = (ShellCase,)
+            bases = (PickerScenarios, ShellCase)
         case = type(shell, bases, {"shell": shell})
         for name in unittest.defaultTestLoader.getTestCaseNames(case):
             if not pattern or pattern in f"{shell}/{name}":

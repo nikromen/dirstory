@@ -26,9 +26,11 @@ pub fn generate_template(shell: &Shell, command: &str) -> String {
     };
     let help = "Usage: $dirstory_name [N]
        $dirstory_name -l|--list [N]
+       $dirstory_name -i|--interactive
        $dirstory_name -h|--help
 
 Navigate through directory visits (default: 1 step).
+  -i, --interactive  Open full directory history (also: dh).
   -l, --list  List neighboring visits (default: 10).
   -h, --help  Show this help.
 N must be a nonnegative decimal integer; zero is allowed.";

@@ -22,6 +22,12 @@ dirstory - navigate backward and forward through visited directories
 
 **f** (**-h** | **--help**)
 
+**b** (**-i** | **--interactive**)
+
+**f** (**-i** | **--interactive**)
+
+**dh** \[**-h** | **--help**\]
+
 # DESCRIPTION
 
 Dirstory tracks directory visits and provides the shell functions **b** and **f**
@@ -89,6 +95,11 @@ the cursor.
 
 **-h**, **--help**
 : Show help for the function without navigating or accessing history.
+
+# INTERACTIVE HISTORY
+
+**dh**, **b -i**, and **f -i** (also **--interactive**) open an interactive picker
+for the full directory history, initially selecting the current visit.
 
 # HISTORY BEHAVIOR
 

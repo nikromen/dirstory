@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod enums;
 mod history;
+mod picker;
 mod shell;
 mod storage;
 mod utils;

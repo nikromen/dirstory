@@ -25,6 +25,7 @@ _dirstory_navigate() {
     local dirstory_name=b
 
     [ "$dirstory_direction" != forward ] || dirstory_name=f
+    [ "$dirstory_direction" != pick ] || dirstory_name=dh
     shift
 
     # Parse user arguments before reading history.
@@ -37,7 +38,12 @@ _dirstory_navigate() {
     fi
 
     # Select a target without changing the current history position.
-    dirstory_output=$(dirstory internal select "$dirstory_direction" "$_dirstory_count") || return 1
+    if [ "$_dirstory_action" = pick ]; then
+        dirstory_output=$(dirstory internal pick) || return 1
+        [ -n "$dirstory_output" ] || return 0
+    else
+        dirstory_output=$(dirstory internal select "$dirstory_direction" "$_dirstory_count") || return 1
+    fi
     if [ -z "$dirstory_output" ]; then
         printf 'dirstory: no directory to go %s to\n' "$dirstory_direction" >&2
         return 1
@@ -51,8 +57,14 @@ _dirstory_navigate() {
 
     # Confirm the selected history position only after cd succeeds.
     command cd "$dirstory_target" || return 1
+    if [ "$PWD" != "$dirstory_target" ]; then
+        printf "%s\n" "dirstory: directory change did not reach the selected path" >&2
+        return 1
+    fi
     dirstory internal commit "$dirstory_token" || return 1
 }
 
 b() { _dirstory_navigate back "$@"; }
 f() { _dirstory_navigate forward "$@"; }
+
+dh() { _dirstory_navigate pick "$@"; }

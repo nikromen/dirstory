@@ -435,6 +435,7 @@ fn initialization_validates_names_before_emitting_code() {
             "if",
             "function",
             "b",
+            "dh",
             "f",
             "dirstory",
             "_dirstory_sync",

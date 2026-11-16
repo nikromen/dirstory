@@ -84,5 +84,7 @@ and similarly to go forward by one step:
 $ f
 ```
 
+Open full interactive history with `dh`, `b -i`, or `f -i`.
+
 For more options, use `b --help`, `f --help`, or `dirstory --help`.
 See `man 1 dirstory` for commands and limitations, and `man 5 dirstory` for configuration.

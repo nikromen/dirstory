@@ -63,6 +63,7 @@ fn command_name(value: &str) -> Result<String, String> {
         "count",
         "status",
         "functions",
+        "dh",
         "b",
         "f",
         "dirstory",
@@ -127,7 +128,7 @@ enum Commands {
 
     /// Print the initialization script for a supported shell.
     #[command(
-        long_about = "Print shell functions for tracking directory changes and navigating with b/f.
+        long_about = "Print shell functions for tracking directory changes and navigating with b/f or the interactive dh picker.
 
 Load the output in your shell configuration: eval \"$(dirstory init bash)\" for Bash,
 eval \"$(dirstory init zsh)\" for Zsh, or dirstory init fish | source for Fish."
@@ -174,6 +175,9 @@ Keep the chosen token and path together. After successful cd to that path, pass
 the token to internal commit. Do not shell-escape or eval path bytes. The snapshot
 lock is released before output; user selection must not retain a history lock.")]
     Snapshot,
+
+    /// Open the interactive history picker on the controlling terminal.
+    Pick,
 
     /// Select a navigation target without changing the current history position.
     #[command(long_about = "Select a navigation target without changing history.
@@ -243,11 +247,11 @@ The current visit is excluded. Listing does not modify history."
     #[command(
         long_about = "Move the history position to a previously selected visit.
 
-TOKEN must be REVISION:OFFSET returned by internal select or internal snapshot.
+TOKEN must be REVISION:OFFSET returned by internal select, internal snapshot, or internal pick.
 A stale token is rejected; this command does not undo a cd already performed by the shell."
     )]
     Commit {
-        /// Visit token returned by internal select or internal snapshot.
+        /// Visit token returned by internal select, internal snapshot, or internal pick.
         #[arg(value_name = "TOKEN", value_parser = commit_token)]
         token: CommitToken,
     },
@@ -274,6 +278,21 @@ fn print_path(path: &std::path::Path) -> io::Result<()> {
 
 impl Cli {
     pub fn run(&self) -> io::Result<()> {
+        self.run_inner().map_err(|error| {
+            if matches!(
+                self.cmd,
+                Commands::Internal {
+                    cmd: InternalCommand::Pick
+                }
+            ) {
+                io::Error::other(error)
+            } else {
+                error
+            }
+        })
+    }
+
+    fn run_inner(&self) -> io::Result<()> {
         if let Commands::Init { command, shell } = &self.cmd {
             println!("{}", generate_template(shell, command));
             return Ok(());
@@ -299,10 +318,24 @@ impl Cli {
             InternalCommand::Select { .. }
                 | InternalCommand::List { .. }
                 | InternalCommand::Snapshot
+                | InternalCommand::Pick
         );
         let mut h = History::open(&dir, exclusive)?;
 
         match cmd {
+            InternalCommand::Pick => {
+                let snapshot = h.snapshot()?;
+                for entry in &snapshot.entries {
+                    check_path(&entry.path)?;
+                }
+                drop(h);
+                if let Some(selection) = crate::picker::pick(snapshot)? {
+                    let mut out = io::stdout().lock();
+                    writeln!(out, "{}:{}", selection.revision, selection.entry.offset)?;
+                    out.write_all(selection.entry.path.as_os_str().as_bytes())?;
+                    out.write_all(b"\n")?;
+                }
+            }
             InternalCommand::Snapshot => {
                 let snapshot = h.snapshot()?;
                 for entry in &snapshot.entries {

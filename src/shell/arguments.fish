@@ -8,8 +8,29 @@ function _dirstory_parse
     set -g _dirstory_action navigate
     set -g _dirstory_count 1
 
+    if test "$dirstory_name" = dh
+        if test (count $argv) -eq 0
+            set -g _dirstory_action pick
+            return 0
+        end
+        if test (count $argv) -eq 1; and contains -- "$argv[1]" -h --help
+            set -g _dirstory_action help
+            printf '%s\n' 'Usage: dh [-h|--help]' 'Open interactive directory history.'
+            return 0
+        end
+        printf '%s\n' 'dirstory: invalid arguments; use dh --help' >&2
+        return 2
+    end
+
     if set -q argv[1]
         switch "$argv[1]"
+            case -i --interactive
+                if test (count $argv) -ne 1
+                    printf 'dirstory: invalid arguments; use %s --help\n' $dirstory_name >&2
+                    return 2
+                end
+                set -g _dirstory_action pick
+                return 0
             case -h --help
                 if test (count $argv) -ne 1
                     printf 'dirstory: invalid arguments; use %s --help\n' $dirstory_name >&2

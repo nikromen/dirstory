@@ -74,6 +74,10 @@ function _dirstory_navigate
         set name f
     end
 
+    if test "$direction" = pick
+        set name dh
+    end
+
     # Parse user arguments before reading history.
     _dirstory_parse $name $argv; or return $status
     if test "$_dirstory_action" = help
@@ -89,9 +93,21 @@ function _dirstory_navigate
     end
 
     # Select a target without changing the current history position.
-    set -l output (dirstory internal select $direction $_dirstory_count)
-    if test $status -ne 0
-        return 1
+    set -l output
+    if test "$_dirstory_action" = pick
+        set output (dirstory internal pick)
+        set -l pick_status $status
+        if test $pick_status -ne 0
+            return 1
+        end
+        if test (count $output) -eq 0
+            return 0
+        end
+    else
+        set output (dirstory internal select $direction $_dirstory_count)
+        if test $status -ne 0
+            return 1
+        end
     end
 
     # The first line is a confirmation token; the second is the target path.
@@ -128,4 +144,8 @@ end
 
 function f
     _dirstory_navigate forward $argv
+end
+
+function dh
+    _dirstory_navigate pick $argv
 end
