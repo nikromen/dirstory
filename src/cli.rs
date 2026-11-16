@@ -162,6 +162,19 @@ impl Direction {
 
 #[derive(Debug, Subcommand)]
 enum InternalCommand {
+    /// Print every visit, oldest first, without changing history.
+    #[command(long_about = "Capture all visits under one shared lock, oldest first.
+
+Each visit is three LF-terminated lines: REVISION:OFFSET, current flag (1 or 0),
+and the unchanged Unix path bytes. Exactly one visit is current; repeated paths
+have distinct tokens. The entire snapshot is validated before output, including
+rejecting LF in paths. Invalid or uninitialized history produces no protocol output.
+
+Keep the chosen token and path together. After successful cd to that path, pass
+the token to internal commit. Do not shell-escape or eval path bytes. The snapshot
+lock is released before output; user selection must not retain a history lock.")]
+    Snapshot,
+
     /// Select a navigation target without changing the current history position.
     #[command(long_about = "Select a navigation target without changing history.
 
@@ -230,11 +243,11 @@ The current visit is excluded. Listing does not modify history."
     #[command(
         long_about = "Move the history position to a previously selected visit.
 
-TOKEN must be REVISION:OFFSET returned by internal select.
+TOKEN must be REVISION:OFFSET returned by internal select or internal snapshot.
 A stale token is rejected; this command does not undo a cd already performed by the shell."
     )]
     Commit {
-        /// Selection token returned by internal select.
+        /// Visit token returned by internal select or internal snapshot.
         #[arg(value_name = "TOKEN", value_parser = commit_token)]
         token: CommitToken,
     },
@@ -283,11 +296,27 @@ impl Cli {
         let dir = get_tmp_dir(config.mode)?;
         let exclusive = !matches!(
             cmd,
-            InternalCommand::Select { .. } | InternalCommand::List { .. }
+            InternalCommand::Select { .. }
+                | InternalCommand::List { .. }
+                | InternalCommand::Snapshot
         );
         let mut h = History::open(&dir, exclusive)?;
 
         match cmd {
+            InternalCommand::Snapshot => {
+                let snapshot = h.snapshot()?;
+                for entry in &snapshot.entries {
+                    check_path(&entry.path)?;
+                }
+                drop(h);
+                let mut out = io::stdout().lock();
+                for entry in snapshot.entries {
+                    writeln!(out, "{}:{}", snapshot.revision, entry.offset)?;
+                    writeln!(out, "{}", u8::from(entry.offset == snapshot.current))?;
+                    out.write_all(entry.path.as_os_str().as_bytes())?;
+                    out.write_all(b"\n")?;
+                }
+            }
             InternalCommand::Select { direction, n } => {
                 if let Some(s) = h.select(direction.back(), *n)? {
                     check_path(&s.entry.path)?;

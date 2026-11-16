@@ -110,7 +110,9 @@ fn internal_protocol_is_hidden_but_has_debug_help() {
     assert!(!help.contains("internal"));
     let help = f.run(&["internal", "--help"]);
     let help = String::from_utf8(help.stdout).unwrap();
-    for command in ["ensure", "visit", "select", "commit", "list", "reset"] {
+    for command in [
+        "ensure", "visit", "select", "commit", "list", "reset", "snapshot",
+    ] {
         assert!(help.contains(command));
     }
     for old in ["history", "navigate"] {
@@ -180,6 +182,7 @@ fn invalid_cli_arguments_leave_history_unchanged() {
         &["internal", "select", "sideways", "1"],
         &["internal", "list", "forward", "-1"],
         &["internal", "list", "back", "184467440737095516160"],
+        &["internal", "snapshot", "extra"],
         &["internal", "commit", ""],
         &["internal", "commit", "1"],
         &["internal", "commit", "1:2:3"],
@@ -195,6 +198,165 @@ fn invalid_cli_arguments_leave_history_unchanged() {
         assert!(result.stdout.is_empty(), "{args:?}");
         assert!(!result.stderr.is_empty(), "{args:?}");
         assert_eq!(before, fs::read(f.data()).unwrap(), "{args:?}");
+    }
+}
+
+/// Parse the byte protocol without decoding paths or confusing repeated visits.
+fn snapshot(f: &Fixture) -> Vec<(String, bool, Vec<u8>)> {
+    let before = fs::read(f.data()).unwrap();
+    let output = f.run(&["internal", "snapshot"]);
+    assert_eq!(before, fs::read(f.data()).unwrap());
+    let mut lines: Vec<_> = output.stdout.split(|b| *b == b'\n').collect();
+    assert_eq!(lines.pop(), Some(b"".as_slice()));
+    assert_eq!(lines.len() % 3, 0);
+    let entries: Vec<_> = lines
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|record| {
+            assert!(record[1] == b"0" || record[1] == b"1");
+            (
+                String::from_utf8(record[0].to_vec()).unwrap(),
+                record[1] == b"1",
+                record[2].to_vec(),
+            )
+        })
+        .collect();
+    assert_eq!(entries.iter().filter(|entry| entry.1).count(), 1);
+    entries
+}
+
+#[test]
+fn snapshot_orders_visits_and_can_commit_every_visit_including_repeats() {
+    let f = Fixture::new();
+    f.run(&["internal", "ensure", "/a"]);
+    assert_eq!(snapshot(&f)[0].2, b"/a");
+    f.run(&["internal", "visit", "--from", "/a", "--to", "/b"]);
+    f.run(&["internal", "visit", "--from", "/b", "--to", "/a"]);
+    for target in [2, 0, 1, 2] {
+        let entries = snapshot(&f);
+        assert_eq!(
+            entries.iter().map(|e| e.2.as_slice()).collect::<Vec<_>>(),
+            [b"/a", b"/b", b"/a"]
+        );
+        assert_ne!(entries[0].0, entries[2].0);
+        let revisions: Vec<_> = entries
+            .iter()
+            .map(|e| e.0.split_once(':').unwrap().0)
+            .collect();
+        assert!(revisions.iter().all(|r| *r == revisions[0]));
+        let before = fs::read(f.data()).unwrap();
+        f.run(&["internal", "commit", &entries[target].0]);
+        let after = fs::read(f.data()).unwrap();
+        assert_eq!(before[64..], after[64..]);
+        if entries[target].1 {
+            assert_eq!(before, after);
+        }
+        let selected = snapshot(&f);
+        assert!(selected[target].1);
+        let current = f.run(&["internal", "select", "back", "0"]);
+        assert_eq!(
+            current.stdout,
+            format!(
+                "{}\n{}\n",
+                selected[target].0,
+                String::from_utf8_lossy(&selected[target].2)
+            )
+            .as_bytes()
+        );
+    }
+}
+
+#[test]
+fn snapshot_tokens_are_rejected_without_writes_after_every_state_change() {
+    for change in ["cursor", "append", "branch", "reset"] {
+        let f = Fixture::new();
+        f.run(&["internal", "ensure", "/a"]);
+        f.run(&["internal", "visit", "--from", "/a", "--to", "/b"]);
+        if change == "branch" {
+            let entries = snapshot(&f);
+            f.run(&["internal", "commit", &entries[0].0]);
+        }
+        let entries = snapshot(&f);
+        match change {
+            "cursor" => {
+                f.run(&["internal", "commit", &entries[0].0]);
+            }
+            "append" => {
+                f.run(&["internal", "visit", "--from", "/b", "--to", "/c"]);
+            }
+            "branch" => {
+                f.run(&["internal", "visit", "--from", "/a", "--to", "/c"]);
+            }
+            "reset" => {
+                f.run(&["internal", "reset", "/a"]);
+            }
+            _ => unreachable!(),
+        }
+        let before = fs::read(f.data()).unwrap();
+        for entry in entries {
+            let result = f.output(&["internal", "commit", &entry.0]);
+            assert!(!result.status.success(), "{change}");
+            assert!(result.stdout.is_empty());
+            assert_eq!(before, fs::read(f.data()).unwrap());
+        }
+    }
+}
+
+#[test]
+fn snapshot_preserves_special_and_non_utf8_path_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let f = Fixture::new();
+    let paths: &[&[u8]] = &[
+        b"/ space\t'\"\\$(echo nope);\r",
+        b"/invalid-\xff\xfe",
+        b"/trailing space ",
+    ];
+    let mut command = f.command(&["internal", "ensure"]);
+    command.arg(std::ffi::OsStr::from_bytes(paths[0]));
+    assert!(bounded_output(command).status.success());
+    for pair in paths.windows(2) {
+        let mut command = f.command(&["internal", "visit", "--from"]);
+        command
+            .arg(std::ffi::OsStr::from_bytes(pair[0]))
+            .arg("--to")
+            .arg(std::ffi::OsStr::from_bytes(pair[1]));
+        assert!(bounded_output(command).status.success());
+    }
+    let entries = snapshot(&f);
+    assert_eq!(
+        entries.iter().map(|e| e.2.as_slice()).collect::<Vec<_>>(),
+        paths
+    );
+    f.run(&["internal", "commit", &entries[1].0]);
+    assert!(snapshot(&f)[1].1);
+}
+
+#[test]
+fn snapshot_rejects_uninitialized_or_invalid_history_without_partial_output() {
+    let f = Fixture::new();
+    let result = f.output(&["internal", "snapshot"]);
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    assert!(fs::read(f.data()).unwrap().is_empty());
+    f.run(&["internal", "ensure", "/a"]);
+    f.run(&["internal", "visit", "--from", "/a", "--to", "/b"]);
+    f.run(&["internal", "visit", "--from", "/b", "--to", "/c"]);
+    let valid = fs::read(f.data()).unwrap();
+    // Damage a late path or old record while keeping the current record valid.
+    for (offset, bytes) in [
+        (109, b"\n".to_vec()),
+        (64, u64::MAX.to_le_bytes().to_vec()),
+        (16, vec![1]),
+        (91, vec![0]),
+    ] {
+        let mut damaged = valid.clone();
+        damaged[offset..offset + bytes.len()].copy_from_slice(&bytes);
+        fs::write(f.data(), &damaged).unwrap();
+        let result = f.output(&["internal", "snapshot"]);
+        assert!(!result.status.success(), "offset {offset}");
+        assert!(result.stdout.is_empty(), "offset {offset}");
+        assert_eq!(damaged, fs::read(f.data()).unwrap());
     }
 }
 

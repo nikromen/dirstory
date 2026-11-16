@@ -23,7 +23,11 @@ class Console:
             "bash": ["bash", "--noprofile", "--norc", "-i"],
             "zsh": ["zsh", "-f", "-i"],
             "fish": ["fish", "--no-config", "-i", "-C",
-                "function fish_prompt; end; function _test_ready --on-event fish_prompt; printf '\\n__READY__\\n'; end"],
+                # Signal after all event handlers, once per prompt. Fish captures
+                # stdout and redraws it while editing, so emit directly to stderr.
+                "function fish_prompt; if set -q _test_pending; set -e _test_pending; "
+                "printf '\\n__READY__\\n' >&2; end; end; "
+                "function _test_ready --on-event fish_prompt; set -g _test_pending 1; end"],
         }[case.shell]
         env = dict(case.env, TERM="dumb", PS1="__READY__\n", RPS1="")
         self.child = subprocess.Popen(args, cwd=case.root, env=env,
@@ -76,6 +80,107 @@ class Console:
 class HookScenarios:
     """Mixed into fixtures for Bash, Zsh and Fish only."""
 
+    def backend_snapshot(self, console):
+        """Inspect history after a prompt without navigation repairing it first."""
+        command = self.snapshot().replace("b -l 999", "dirstory internal list back 999").replace(
+            "f -l 999", "dirstory internal list forward 999")
+        output = console.step(command)
+        states = self.parse_snapshot(output)
+        self.assertEqual(len(states), 1, output)
+        return states[0], output
+
+    def test_interactive_navigation_and_branching(self):
+        console = Console(self)
+        # All three shells must meet this same contract after each prompt.
+        scenarios = [
+            ("cd a", "a", ("",), ()),
+            ("cd ../b", "b", ("a", ""), ()),
+            ("cd ../c", "c", ("b", "a", ""), ()),
+            ("b 2", "a", ("",), ("b", "c")),
+            ("f", "b", ("a", ""), ("c",)),
+            ("b -l 999", "b", ("a", ""), ("c",)),
+            ("f -l 999", "b", ("a", ""), ("c",)),
+            ("cd ../missing", "b", ("a", ""), ("c",)),
+            ("b", "a", ("",), ("b", "c")),
+            ("cd ../c", "c", ("a", ""), ()),
+            ("b", "a", ("",), ("c",)),
+            ("f", "c", ("a", ""), ()),
+        ]
+        for command, pwd, back, forward in scenarios:
+            with self.subTest(command=command):
+                output = console.step(command)
+                state, details = self.backend_snapshot(console)
+                if command == "cd ../missing":
+                    self.assertNotEqual(state.status, 0, output + details)
+                    status = state.status
+                else:
+                    status = 0
+                self.assert_state(state, pwd, back, forward, status=status, details=output + details)
+                if "-l" in command:
+                    paths = back if command.startswith("b") else forward
+                    # Interactive line editors may echo input and decorate the
+                    # prompt; compare only the absolute paths printed by listing.
+                    listed = [line for line in output.splitlines() if line.startswith(str(self.root))]
+                    self.assertEqual(listed, self.paths(*paths), output)
+
+    def test_interactive_reinitialization_preserves_hooks_and_visits(self):
+        if self.shell == "bash":
+            setup = "PROMPT_COMMAND='printf \"__USER_PROMPT__\\n\"'"
+            registration = "printf '__HOOK__%s\\n' \"${PROMPT_COMMAND[@]}\""
+            expected_hooks = ["_dirstory_observe", 'printf "__USER_PROMPT__\\n"']
+            markers = ["__USER_PROMPT__\n"]
+        elif self.shell == "zsh":
+            setup = ("chpwd() { printf '__USER_CHPWD__\\n'; }; "
+                     "user_hook() { printf '__USER_ARRAY__\\n'; }; chpwd_functions=(user_hook)")
+            registration = "printf '__HOOK__%s\\n' \"${chpwd_functions[@]}\""
+            expected_hooks = ["user_hook", "_dirstory_observe"]
+            markers = ["__USER_CHPWD__\n", "__USER_ARRAY__\n"]
+        else:
+            setup = ("function user_hook --on-variable PWD; printf '__USER_PWD__\\n'; end; "
+                     "function user_prompt --on-event fish_prompt; printf '__USER_PROMPT__\\n'; end")
+            registration = "functions --handlers"
+            expected_hooks = ["PWD _dirstory_observe", "fish_prompt _dirstory_prompt",
+                              "PWD user_hook", "fish_prompt user_prompt"]
+            markers = ["__USER_PWD__\n", "__USER_PROMPT__\n"]
+        console = Console(self, setup)
+        console.step("cd a")
+        console.step("cd ../b")
+        console.step("b")
+        state, details = self.backend_snapshot(console)
+        self.assert_state(state, "a", ("",), ("b",), details=details)
+        history = self.root / "runtime/dirstory/tmux-scenario/history.bin"
+        before = history.read_bytes()
+        for _ in range(3):
+            console.step(self.init())
+            self.assertEqual(history.read_bytes(), before)
+            output = console.step(registration)
+            lines = [" ".join(line.split()) for line in output.splitlines()]
+            for hook in expected_hooks:
+                line = hook if self.shell == "fish" else "__HOOK__" + hook
+                self.assertEqual(lines.count(line), 1, output)
+
+        # Spy after initialization to count real backend visits, including any
+        # duplicate callbacks that the backend itself might deduplicate.
+        calls = self.root / "calls"
+        if self.shell == "fish":
+            spy = f"function dirstory; printf '%s\\n' $argv[2] >> '{calls}'; command dirstory $argv; end"
+        else:
+            spy = f"dirstory() {{ printf '%s\\n' \"$2\" >> '{calls}'; command dirstory \"$@\"; }}"
+        console.step(spy)
+        for command, pwd, back, forward in [
+            ("f", "b", ("a", ""), ()),
+            ("b", "a", ("",), ("b",)),
+            ("cd ../c", "c", ("a", ""), ()),
+        ]:
+            output = console.step(command)
+            for marker in markers:
+                self.assertEqual(output.count(marker), 1, output)
+            state, details = self.backend_snapshot(console)
+            self.assert_state(state, pwd, back, forward, details=details)
+        backend_calls = calls.read_text().splitlines()
+        self.assertEqual(backend_calls.count("visit"), 1, backend_calls)
+        self.assertEqual(backend_calls.count("commit"), 2, backend_calls)
+
     def test_builtin_changes_and_same_path(self):
         states, details = self.run_script(["builtin cd a", "builtin cd .", "b", "f"])
         self.assert_state(states[0], "a", ("",), details=details)
@@ -118,13 +223,12 @@ class HookScenarios:
     def test_interactive_prompt_tracks_builtin_change(self):
         console = Console(self)
         console.step("builtin cd a")
-        output = console.step(self.snapshot())
-        states = self.parse_snapshot(output)
-        self.assert_state(states[0], "a", ("",), details=output)
+        state, output = self.backend_snapshot(console)
+        self.assert_state(state, "a", ("",), details=output)
         console.step("b")
         console.step("f")
-        output = console.step(self.snapshot())
-        self.assert_state(self.parse_snapshot(output)[0], "a", ("",), details=output)
+        state, output = self.backend_snapshot(console)
+        self.assert_state(state, "a", ("",), details=output)
 
     def test_interactive_prompt_preserves_status(self):
         console = Console(self)
@@ -273,8 +377,8 @@ class BashScenarios:
     def test_builtin_intermediate_changes_are_not_reconstructed(self):
         console = Console(self)
         console.step("builtin cd a; builtin cd ../b")
-        output = console.step(self.snapshot())
-        self.assert_state(self.parse_snapshot(output)[0], "b", ("",), details=output)
+        state, output = self.backend_snapshot(console)
+        self.assert_state(state, "b", ("",), details=output)
 
 
 class NativeHookScenarios:
@@ -356,16 +460,15 @@ class FishScenarios(NativeHookScenarios):
     def test_consecutive_changes_and_prompt_correction(self):
         console = Console(self)
         console.step("cd a; builtin cd ../b")
-        output = console.step(self.snapshot())
-        before = self.parse_snapshot(output)[0]
+        before, output = self.backend_snapshot(console)
         self.assertEqual(before.status, 0, output)
         self.assertEqual(before.pwd, self.paths("b")[0], output)
         self.assertIn(str(self.root), before.back, output)
         self.assertNotIn(before.pwd, before.back, output)
         self.assertEqual(before.forward, [], output)
         console.step("_dirstory_prompt; _dirstory_prompt")
-        output = console.step(self.snapshot())
-        self.assertEqual(self.parse_snapshot(output)[0], before, output)
+        after, output = self.backend_snapshot(console)
+        self.assertEqual(after, before, output)
 
     def test_missing_variable_event_is_repaired_before_navigation(self):
         states, details = self.run_script(["functions -e _dirstory_observe", "builtin cd a", "b", "f"])
@@ -376,11 +479,8 @@ class FishScenarios(NativeHookScenarios):
     def test_missing_variable_event_is_repaired_at_prompt(self):
         console = Console(self)
         console.step("functions -e _dirstory_observe; builtin cd a; builtin cd ../b")
-        # Read the backend directly so listing cannot itself repair the history.
-        raw_snapshot = self.snapshot().replace("b -l 999", "dirstory internal list back 999").replace(
-            "f -l 999", "dirstory internal list forward 999")
-        output = console.step(raw_snapshot)
-        self.assert_state(self.parse_snapshot(output)[0], "b", ("",), details=output)
+        state, output = self.backend_snapshot(console)
+        self.assert_state(state, "b", ("",), details=output)
         output = console.step(self.snapshot())
         self.assert_state(self.parse_snapshot(output)[0], "b", ("",), details=output)
 

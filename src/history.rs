@@ -61,6 +61,19 @@ pub struct Selection {
     pub revision: u64,
 }
 
+/// Complete read-only history, captured under one session lock.
+#[derive(Debug)]
+pub struct Snapshot {
+    /// Shared generation for all visit tokens in this snapshot.
+    pub revision: u64,
+
+    /// Offset identifying the unique current visit, including repeated paths.
+    pub current: u64,
+
+    /// All visits in chronological order, oldest first.
+    pub entries: Vec<Entry>,
+}
+
 /// History logic over storage; the default storage holds a session file lock.
 ///
 /// Generic storage uses static dispatch. Tests substitute an adapter that fails
@@ -73,7 +86,7 @@ impl History {
     /// Open or create the files and acquire the session lock.
     ///
     /// Use an exclusive lock for every mutating method, or a shared lock for
-    /// selection and listing. This does not initialize or validate the contents.
+    /// selection, listing and snapshots. This does not initialize or validate the contents.
     /// Directory permissions are 0700 and file permissions are 0600.
     ///
     /// Returns filesystem or lock errors; lock acquisition may block.
@@ -330,6 +343,35 @@ impl<S: Storage> History<S> {
         self.write_header(h, false)
     }
 
+    /// Read and validate the entire history.
+    ///
+    /// The caller must retain a shared lock throughout this read. Each visit's
+    /// token is `revision:entry.offset`; keep it paired with its path for a later
+    /// commit after successful cd. Release the lock before user selection.
+    /// Path bytes are unchanged; line-protocol consumers must reject LF before
+    /// emitting any output. Unlike local navigation, this validates every record
+    /// and verifies that the current offset is reachable from the first record.
+    pub fn snapshot(&mut self) -> io::Result<Snapshot> {
+        let h = self.header()?;
+        let mut entries = Vec::new();
+        let mut offset = START;
+        let mut found_current = false;
+        while offset < h.end {
+            let entry = self.entry(offset, h.end)?;
+            found_current |= entry.offset == h.current;
+            offset = entry.end;
+            entries.push(entry);
+        }
+        if !found_current {
+            return Err(invalid());
+        }
+        Ok(Snapshot {
+            revision: h.revision,
+            current: h.current,
+            entries,
+        })
+    }
+
     pub fn list(&mut self, back: bool, n: usize) -> io::Result<Vec<Entry>> {
         let h = self.header()?;
         let mut e = self.entry(h.current, h.end)?;
@@ -358,6 +400,11 @@ mod tests {
         let path = PathBuf::from(std::ffi::OsString::from_vec(b"/non-utf8-\xff\n".to_vec()));
         h.reset(&path)?;
         assert_eq!(h.select(true, 0)?.unwrap().entry.path, path);
+        let snapshot = h.snapshot()?;
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.current, snapshot.entries[0].offset);
+        assert_eq!(snapshot.entries[0].path, path);
+        assert_eq!(snapshot.revision, h.header()?.revision);
         Ok(())
     }
 
@@ -372,6 +419,7 @@ mod tests {
         h.file.write_at(START, &u64::MAX.to_le_bytes())?;
         assert_eq!(h.select(true, 1)?.unwrap().entry.path, Path::new("/b"));
         assert!(h.select(true, 2).is_err());
+        assert!(h.snapshot().is_err());
         Ok(())
     }
 
