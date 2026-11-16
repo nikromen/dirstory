@@ -13,9 +13,14 @@ function _dirstory_parse
             set -g _dirstory_action pick
             return 0
         end
+        if test (count $argv) -eq 1; and test "$argv[1]" = --reset
+            set -g _dirstory_action reset
+            return 0
+        end
+
         if test (count $argv) -eq 1; and contains -- "$argv[1]" -h --help
             set -g _dirstory_action help
-            printf '%s\n' 'Usage: dh [-h|--help]' 'Open interactive directory history.'
+            printf '%s\n' "<DH_HELP>"
             return 0
         end
         printf '%s\n' 'dirstory: invalid arguments; use dh --help' >&2

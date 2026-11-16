@@ -85,6 +85,14 @@ function _dirstory_navigate
     end
 
     _dirstory_parent; or return 1
+
+    # Recovery must bypass synchronization and validation of the old history.
+    if test "$_dirstory_action" = reset
+        dirstory internal reset "$PWD"; or return 1
+        set -g _dirstory_last_pwd "$PWD"
+        return 0
+    end
+
     _dirstory_sync; or return 1
 
     if test "$_dirstory_action" = list

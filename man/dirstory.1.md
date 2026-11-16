@@ -26,7 +26,7 @@ dirstory - navigate backward and forward through visited directories
 
 **f** (**-i** | **--interactive**)
 
-**dh** \[**-h** | **--help**\]
+**dh** \[**--reset** | **-h** | **--help**\]
 
 # DESCRIPTION
 
@@ -101,6 +101,11 @@ the cursor.
 **dh**, **b -i**, and **f -i** (also **--interactive**) open an interactive picker
 for the full directory history, initially selecting the current visit; type to fuzzy
 search paths.
+
+**dh --reset**
+: Discard all visits in the current session and restart at **PWD**, without changing
+directory; use this to recover from invalid history or an interrupted write.
+This cannot be undone and affects all shells sharing the history.
 
 # HISTORY BEHAVIOR
 

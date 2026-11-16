@@ -11,9 +11,10 @@ _dirstory_parse() {
     if [ "$dirstory_name" = dh ]; then
         case "$#:${1-}" in
             0:) _dirstory_action=pick; return 0 ;;
+            1:--reset) _dirstory_action=reset; return 0 ;;
             1:-h|1:--help)
                 _dirstory_action=help
-                printf '%s\n' 'Usage: dh [-h|--help]' 'Open interactive directory history.'
+                printf '%s\n' "<DH_HELP>"
                 return 0 ;;
             *) printf '%s\n' 'dirstory: invalid arguments; use dh --help' >&2; return 2 ;;
         esac

@@ -46,6 +46,14 @@ _dirstory_navigate() {
     [ "$_dirstory_action" != help ] || return 0
 
     _dirstory_parent || return 1
+
+    # Recovery must bypass synchronization and validation of the old history.
+    if [ "$_dirstory_action" = reset ]; then
+        dirstory internal reset "$PWD" || return 1
+        _dirstory_last_pwd="$PWD"
+        return 0
+    fi
+
     <SYNC>
 
     if [ "$_dirstory_action" = list ]; then

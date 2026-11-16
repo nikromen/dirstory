@@ -24,7 +24,7 @@ const MAGIC: &[u8; 8] = b"DIRSTORY";
 fn invalid() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
-        "Invalid or interrupted history; use dirstory internal reset PATH",
+        "Invalid or interrupted history; use dh --reset",
     )
 }
 

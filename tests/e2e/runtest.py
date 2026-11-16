@@ -18,6 +18,7 @@ import time
 import unittest
 
 from picker import PickerScenarios
+from reset import ResetScenarios
 from hooks import BashScenarios, FishScenarios, HookScenarios, ZshScenarios
 
 SHELLS = ("sh", "dash", "bash", "zsh", "fish")
@@ -493,9 +494,9 @@ def main():
             continue
         extra = {"bash": BashScenarios, "zsh": ZshScenarios, "fish": FishScenarios}.get(shell)
         if extra:
-            bases = (extra, HookScenarios, PickerScenarios, ShellCase)
+            bases = (extra, HookScenarios, ResetScenarios, PickerScenarios, ShellCase)
         else:
-            bases = (PickerScenarios, ShellCase)
+            bases = (ResetScenarios, PickerScenarios, ShellCase)
         case = type(shell, bases, {"shell": shell})
         for name in unittest.defaultTestLoader.getTestCaseNames(case):
             if not pattern or pattern in f"{shell}/{name}":

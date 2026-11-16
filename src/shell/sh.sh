@@ -32,6 +32,11 @@ _dirstory_navigate() {
     _dirstory_parse "$dirstory_name" "$@" || return $?
     [ "$_dirstory_action" != help ] || return 0
 
+    if [ "$_dirstory_action" = reset ]; then
+        dirstory internal reset "$PWD" || return 1
+        return 0
+    fi
+
     if [ "$_dirstory_action" = list ]; then
         dirstory internal list "$dirstory_direction" "$_dirstory_count" || return 1
         return 0

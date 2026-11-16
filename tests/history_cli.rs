@@ -79,7 +79,7 @@ fn interrupted_write_is_rejected_and_reset_recovers() {
     let result = f.output(&["internal", "select", "back", "1"]);
     assert!(!result.status.success());
     assert!(result.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("reset"));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("dh --reset"));
     f.run(&["internal", "reset", "/b"]);
     assert_eq!(f.run(&["internal", "list", "back", "10"]).stdout, b"");
 }

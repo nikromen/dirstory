@@ -35,6 +35,14 @@ Navigate through directory visits (default: 1 step).
   -h, --help  Show this help.
 N must be a nonnegative decimal integer; zero is allowed.";
 
+    let dh_help = "Usage: dh [--reset | -h | --help]
+
+Open interactive directory history.
+  --reset  Discard all visits and restart at the current directory.
+           Use after invalid history or an interrupted write.
+           Removed visits cannot be recovered; affects all shells sharing this history.
+  -h, --help  Show this help.";
+
     let custom = if command == "cd" {
         String::new()
     } else {
@@ -48,6 +56,7 @@ N must be a nonnegative decimal integer; zero is allowed.";
         .replace("<COMMON>", &common)
         .replace("<ARGUMENTS>", arguments)
         .replace("<HELP>", help)
+        .replace("<DH_HELP>", dh_help)
         .replace("<MAX_COUNT>", &usize::MAX.to_string())
         .replace("<CUSTOM_COMMAND>", &custom)
         .replace("<COMMAND>", command)
