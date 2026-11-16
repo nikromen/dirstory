@@ -9,7 +9,7 @@
 %endif
 
 Name:           %{pkg_name}
-Version:        0.1.0
+Version:        1.0.0
 Release:        %autorelease
 Summary:        Navigate backward and forward through directory visits
 

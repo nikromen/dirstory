@@ -1,6 +1,6 @@
 [package]
 name = "dirstory"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Jiri Kyjovsky <j1.kyjovsky@gmail.com>"]
 about = "Add history functionality to your cd command"
 edition = "2021"
