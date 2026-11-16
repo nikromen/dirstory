@@ -1,15 +1,58 @@
 """Controlling-terminal tests with protocol output captured separately."""
 
+import codecs
 import contextlib
 import fcntl
 import os
 import pty
+import re
 import selectors
 import signal
 import struct
 import subprocess
 import termios
 import time
+
+
+class Screen:
+    """Track Ratatui's cursor-addressed output, including incremental redraws."""
+
+    def __init__(self, rows=24, columns=80):
+        self.cells = [[" "] * columns for _ in range(rows)]
+        self.row = self.column = 0
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self.pending = ""
+
+    def feed(self, data):
+        self.pending += self.decoder.decode(data)
+        while self.pending:
+            if self.pending.startswith("\x1b"):
+                match = re.match(r"\x1b\[([0-?]*)([ -/]*)([@-~])", self.pending)
+                if not match:
+                    return
+                parameters, _, code = match.groups()
+                self.pending = self.pending[match.end():]
+                if code in ("H", "f"):
+                    values = [int(v or "1") for v in parameters.split(";")]
+                    self.row = values[0] - 1
+                    self.column = (values[1] if len(values) > 1 else 1) - 1
+                elif code == "J" and parameters in ("2", "3"):
+                    self.cells = [[" "] * len(row) for row in self.cells]
+                elif code == "K":
+                    self.cells[self.row][self.column:] = [" "] * (len(self.cells[self.row]) - self.column)
+                continue
+
+            char, self.pending = self.pending[0], self.pending[1:]
+            if char == "\r":
+                self.column = 0
+            elif char == "\n":
+                self.row += 1
+            elif 0 <= self.row < len(self.cells) and 0 <= self.column < len(self.cells[0]):
+                self.cells[self.row][self.column] = char
+                self.column += 1
+
+    def text(self):
+        return "\n".join("".join(row) for row in self.cells)
 
 
 class PickerScenarios:
@@ -50,10 +93,75 @@ class PickerScenarios:
                 output += os.read(master, 65536)
         return output
 
+    def screen_until(self, master, screen, predicate):
+        deadline = time.monotonic() + self.timeout
+        with selectors.DefaultSelector() as selector:
+            selector.register(master, selectors.EVENT_READ)
+            while not predicate(screen.text()):
+                remaining = deadline - time.monotonic()
+                self.assertGreater(remaining, 0, screen.text())
+                self.assertTrue(selector.select(remaining), screen.text())
+                data = os.read(master, 65536)
+                self.assertTrue(data, screen.text())
+                screen.feed(data)
+        return screen.text()
+
+    def test_picker_fuzzy_typing_editing_and_confirmation(self):
+        for name in ("qalpha-confirmation", "qbeta"):
+            (self.root / name).mkdir()
+        q_count = "3/3" if "q" in str(self.root).lower() else "2/3"
+        script = self.init() + "\ncd qalpha-confirmation\ncd ../qbeta\ndh\n" + self.snapshot()
+        script += "\ncd ../c\n" + self.snapshot() + "\ntrue"
+
+        with self.picker_process(script) as (child, master, _):
+            screen = Screen()
+            self.screen_until(master, screen, lambda text: "Directory history" in text and "3/3" in text)
+            os.write(master, b"q")
+            self.screen_until(master, screen, lambda text: "Search: q" in text and q_count in text)
+            self.assertIsNone(child.poll(), "q canceled instead of becoming search text")
+
+            os.write(master, "ž".encode())
+            self.screen_until(master, screen, lambda text: "Search: qž" in text and "No matches" in text)
+            os.write(master, b"\r\x7f")
+            self.screen_until(master, screen, lambda text: "Search: q " in text and q_count in text)
+            self.assertIsNone(child.poll(), "Enter confirmed an empty result set")
+
+            os.write(master, b"alpha-confirmationZ")
+            self.screen_until(master, screen, lambda text: "Search: qalpha-confirmationZ" in text and "0/3" in text)
+            os.write(master, b"\x7f")
+            self.screen_until(master, screen, lambda text: "Search: qalpha-confirmation " in text and "1/3" in text and "qalpha-confirmation" in text)
+
+            os.write(master, b"\x15")
+            self.screen_until(master, screen, lambda text: "3/3" in text and "BACK" in text)
+            os.write(master, b"qalpha-confirmation")
+            self.screen_until(master, screen, lambda text: "Search: qalpha-confirmation" in text and "1/3" in text)
+            os.write(master, b"\r")
+            out, err = child.communicate(timeout=self.timeout)
+            states = self.parse_snapshot(os.fsdecode(out))
+            self.assertEqual(states[0].status, 0, err)
+            self.assertEqual(states[0].pwd, str(self.root / "qalpha-confirmation"), err)
+            self.assertEqual(states[0].forward, [str(self.root / "qbeta")], err)
+            self.assertEqual(states[1].back[0], str(self.root / "qalpha-confirmation"), err)
+            self.assertNotIn(b"\x1b", out)
+
+    def test_picker_cancel_after_typing(self):
+        for keys in (b"\x1b", b"\x03"):
+            script = self.init() + "\ncd a\ndh\n" + self.snapshot() + "\ntrue"
+            with self.picker_process(script) as (child, master, _):
+                screen = Screen()
+                self.screen_until(master, screen, lambda text: "Directory history" in text)
+                os.write(master, b"no-matching-visit")
+                self.screen_until(master, screen, lambda text: "No matches" in text)
+                os.write(master, keys)
+                out, err = child.communicate(timeout=self.timeout)
+                states = self.parse_snapshot(os.fsdecode(out))
+                self.assertEqual(states[0].status, 0, err)
+                self.assertEqual(states[0].pwd, str(self.root / "a"), err)
+
     def test_picker_shell_commands(self):
         for command in ("b -i", "f -i", "b --interactive", "f --interactive", "dh"):
             for keys, destination in ((b"\x1b[A\r", "a"), (b"\r", "b"),
-                                      (b"\x1b", "b"), (b"\x03", "b"), (b"q", "b")):
+                                      (b"\x1b", "b"), (b"\x03", "b")):
                 with self.subTest(command=command, keys=keys):
                     script = self.init() + "\ncd a\ncd ../b\n" + command + "\n" + self.snapshot()
                     script += "\ncd ../c\n" + self.snapshot() + "\ntrue"

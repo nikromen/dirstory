@@ -99,7 +99,8 @@ the cursor.
 # INTERACTIVE HISTORY
 
 **dh**, **b -i**, and **f -i** (also **--interactive**) open an interactive picker
-for the full directory history, initially selecting the current visit.
+for the full directory history, initially selecting the current visit; type to fuzzy
+search paths.
 
 # HISTORY BEHAVIOR
 
