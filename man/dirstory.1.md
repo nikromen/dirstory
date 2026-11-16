@@ -66,8 +66,9 @@ is **cd**. For example:
 eval "$(dirstory init bash --command cdir)"
 ```
 
-In Bash and sh, use the configured command to record changes immediately.
-Zsh and Fish also track ordinary **cd** when a custom command is configured.
+In Bash and sh, the configured command wraps the directory-change builtin to
+record changes immediately. In Zsh and Fish, ordinary **cd** uses native shell
+hooks without a wrapper; a custom command is an optional helper.
 
 Names must match the ASCII pattern `[A-Za-z_][A-Za-z0-9_]*`.
 Shell keywords, names used by the integration, and names beginning with
@@ -105,17 +106,20 @@ distinct when the shell preserves them.
 
 # LIMITATIONS
 
-Bash records changes through the configured command immediately and checks for
-other changes before the next interactive prompt or navigation command.
-Several changes bypassing the configured command before that check may lose
-intermediate visits. An unsupported **PROMPT_COMMAND** declaration disables
-prompt tracking and produces a warning.
+Bash records each change through the configured wrapper immediately, including
+several changes in one command line. It checks for other changes, including
+**builtin cd**, before the next interactive prompt, navigation, or history
+listing. Several changes bypassing the wrapper before that check may record only
+the final directory. An unsupported **PROMPT_COMMAND** declaration disables prompt
+tracking and produces a warning.
 
-Zsh tracks directory changes through its directory-change hook. **cd -q**
-explicitly suppresses hooks and is not tracked.
+Zsh tracks each ordinary change, including **builtin cd**, through its
+directory-change hook. **cd -q** explicitly suppresses hooks and is not tracked
+or caught up by later navigation or listing.
 
-Fish observes changes to **PWD** and checks again before a prompt or navigation
-command. Several changes together may lose intermediate visits. A Fish command
+Fish observes changes to **PWD**, including **builtin cd**, and checks again
+before a prompt, navigation, or history listing. These checks record the final
+directory without reconstructing unobserved intermediate visits. A Fish command
 substitution that changes the main shell's directory is tracked as an actual
 directory change.
 

@@ -213,6 +213,21 @@ end'''
 class BashScenarios:
     """PROMPT_COMMAND composition and Bash-specific observation boundaries."""
 
+    def test_wrapper_preserves_consecutive_changes(self):
+        states, details = self.run_script(["cd a; cd ../b; cd ..", "b", "f"])
+        self.assert_state(states[0], "", ("b", "a", ""), details=details)
+        self.assert_state(states[1], "b", ("a", ""), ("",), details=details)
+        self.assertEqual(states[0], states[2], details)
+
+    def test_user_prompt_command_runs_during_navigation(self):
+        console = Console(self, "PROMPT_COMMAND='printf \"__USER_PWD__%s\\n\" \"$PWD\"'")
+        console.step("cd a")
+        for command, directory in (("b", ""), ("f", "a")):
+            output = console.step(command)
+            self.assertIn("__USER_PWD__" + self.paths(directory)[0] + "\n", output)
+        output = console.step(self.snapshot())
+        self.assert_state(self.parse_snapshot(output)[0], "a", ("",), details=output)
+
     def test_prompt_command_registration_forms(self):
         setups = [
             "unset PROMPT_COMMAND",
@@ -265,6 +280,31 @@ class BashScenarios:
 class NativeHookScenarios:
     """Directory callbacks must not confirm a redirected navigation target."""
 
+    def test_user_hooks_run_during_navigation_without_new_visits(self):
+        log = str(self.root / "hooks")
+        calls = str(self.root / "calls")
+        if self.shell == "fish":
+            hook = f"function user_hook --on-variable PWD; printf '%s\\n' \"$PWD\" >> '{log}'; end"
+            spy = f"function dirstory; printf '%s\\n' $argv[2] >> '{calls}'; command dirstory $argv; end"
+        else:
+            hook = (
+                f"chpwd() {{ printf 'chpwd:%s\\n' \"$PWD\" >> '{log}'; }}; "
+                f"user_hook() {{ printf 'array:%s\\n' \"$PWD\" >> '{log}'; }}; "
+                "chpwd_functions=(user_hook \"${chpwd_functions[@]}\")"
+            )
+            spy = f"dirstory() {{ printf '%s\\n' \"$2\" >> '{calls}'; command dirstory \"$@\"; }}"
+        states, details = self.run_script([hook, spy, "cd a", "b", "f"])
+        self.assert_state(states[3], "", (), ("a",), details=details)
+        self.assert_state(states[4], "a", ("",), details=details)
+        paths = self.paths("a", "", "a")
+        expected = paths if self.shell == "fish" else [
+            prefix + path for path in paths for prefix in ("chpwd:", "array:")
+        ]
+        self.assertEqual((self.root / "hooks").read_text().splitlines(), expected, details)
+        backend_calls = (self.root / "calls").read_text().splitlines()
+        self.assertEqual(backend_calls.count("visit"), 1, backend_calls)
+        self.assertEqual(backend_calls.count("commit"), 2, backend_calls)
+
     def test_navigation_redirect_does_not_commit(self):
         if self.shell == "fish":
             redirect = '''function redirect --on-variable PWD
@@ -297,13 +337,35 @@ end'''
 class ZshScenarios(NativeHookScenarios):
     """Zsh deliberately respects explicit hook suppression."""
 
+    def test_hooks_preserve_consecutive_changes(self):
+        states, details = self.run_script(["cd a; builtin cd ../b; builtin cd ..", "b", "f"])
+        self.assert_state(states[0], "", ("b", "a", ""), details=details)
+        self.assert_state(states[1], "b", ("a", ""), ("",), details=details)
+        self.assertEqual(states[0], states[2], details)
+
     def test_cd_q_is_not_tracked(self):
-        states, details = self.run_script(["builtin cd -q a"])
-        self.assert_state(states[0], "a", details=details)
+        states, details = self.run_script(["cd -q a; builtin cd -q ../b", "b", "f"])
+        self.assert_state(states[0], "b", details=details)
+        for state in states[1:]:
+            self.assert_state(state, "b", status=1, details=details)
 
 
 class FishScenarios(NativeHookScenarios):
     """Fallback checks repair a missed variable event without inventing visits."""
+
+    def test_consecutive_changes_and_prompt_correction(self):
+        console = Console(self)
+        console.step("cd a; builtin cd ../b")
+        output = console.step(self.snapshot())
+        before = self.parse_snapshot(output)[0]
+        self.assertEqual(before.status, 0, output)
+        self.assertEqual(before.pwd, self.paths("b")[0], output)
+        self.assertIn(str(self.root), before.back, output)
+        self.assertNotIn(before.pwd, before.back, output)
+        self.assertEqual(before.forward, [], output)
+        console.step("_dirstory_prompt; _dirstory_prompt")
+        output = console.step(self.snapshot())
+        self.assertEqual(self.parse_snapshot(output)[0], before, output)
 
     def test_missing_variable_event_is_repaired_before_navigation(self):
         states, details = self.run_script(["functions -e _dirstory_observe", "builtin cd a", "b", "f"])
@@ -313,9 +375,14 @@ class FishScenarios(NativeHookScenarios):
 
     def test_missing_variable_event_is_repaired_at_prompt(self):
         console = Console(self)
-        console.step("functions -e _dirstory_observe; builtin cd a")
-        output = console.step("dirstory internal list back 99")
-        self.assertIn(str(self.root) + "\n", output)
+        console.step("functions -e _dirstory_observe; builtin cd a; builtin cd ../b")
+        # Read the backend directly so listing cannot itself repair the history.
+        raw_snapshot = self.snapshot().replace("b -l 999", "dirstory internal list back 999").replace(
+            "f -l 999", "dirstory internal list forward 999")
+        output = console.step(raw_snapshot)
+        self.assert_state(self.parse_snapshot(output)[0], "b", ("",), details=output)
+        output = console.step(self.snapshot())
+        self.assert_state(self.parse_snapshot(output)[0], "b", ("",), details=output)
 
     def test_builtin_in_substitution_changes_the_owning_fish(self):
         states, details = self.run_script(["set ignored (builtin cd a; pwd)", "b", "f"])
