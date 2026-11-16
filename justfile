@@ -20,6 +20,9 @@ export TEST_FILTER := env("TEST_FILTER", "")
 export TEST_JOBS := env("TEST_JOBS", "1")
 export E2E_SHELL := env("E2E_SHELL", "")
 export E2E_FILTER := env("E2E_FILTER", "")
+export BENCH_SHELL := env("BENCH_SHELL", "")
+export BENCH_MODE := env("BENCH_MODE", "")
+export BENCH_SIZE := env("BENCH_SIZE", "")
 export E2E_TIMEOUT := env("E2E_TIMEOUT", "10")
 export RUST_BACKTRACE := env("RUST_BACKTRACE", "1")
 
@@ -51,6 +54,10 @@ test-e2e: build
 test:
     just test-unit
     just test-e2e
+
+# Deliberately separate from test/test-all and CI.
+bench: build-release
+    DIRSTORY_BIN="${CARGO_TARGET_DIR:-target}/release/dirstory" python3 tests/bench/run.py
 
 test-full-backtrace:
     RUST_BACKTRACE=full just test
@@ -86,6 +93,14 @@ container-test:
     podman run {{container_args}} -e TEST_FILTER -e TEST_JOBS -e RUST_BACKTRACE \
         -e E2E_SHELL -e E2E_FILTER -e E2E_TIMEOUT -e DIRSTORY_REQUIRE_SHELLS=1 \
         {{quote(image)}} just test
+
+# Bind benchmark artifacts separately so results remain accessible on the host.
+container-bench:
+    mkdir -p {{quote(workspace + "/target/bench")}}
+    podman run {{container_args}} \
+        -v {{quote(workspace + "/target/bench:/workspace/target/bench:z")}} \
+        -e BENCH_SHELL -e BENCH_MODE -e BENCH_SIZE \
+        {{quote(image)}} just bench
 
 container-test-full-backtrace:
     RUST_BACKTRACE=full just container-test

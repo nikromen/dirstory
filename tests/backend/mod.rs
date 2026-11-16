@@ -6,6 +6,7 @@ use std::fs;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+mod io_counts;
 mod rules;
 
 /// Outcome injected by the test storage, never by history logic.
