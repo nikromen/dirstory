@@ -6,6 +6,105 @@ use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
+/// Validate an identifier before embedding it in any shell's function syntax.
+fn command_name(value: &str) -> Result<String, String> {
+    const RESERVED: &[&str] = &[
+        "_",
+        "if",
+        "then",
+        "else",
+        "elif",
+        "fi",
+        "case",
+        "esac",
+        "for",
+        "while",
+        "until",
+        "do",
+        "done",
+        "in",
+        "function",
+        "select",
+        "time",
+        "coproc",
+        "repeat",
+        "foreach",
+        "always",
+        "and",
+        "or",
+        "not",
+        "begin",
+        "end",
+        "switch",
+        "break",
+        "continue",
+        "builtin",
+        "command",
+        "local",
+        "set",
+        "printf",
+        "test",
+        "return",
+        "eval",
+        "echo",
+        "true",
+        "false",
+        "source",
+        "exec",
+        "declare",
+        "typeset",
+        "export",
+        "readonly",
+        "unset",
+        "read",
+        "argparse",
+        "string",
+        "math",
+        "count",
+        "status",
+        "functions",
+        "b",
+        "f",
+        "dirstory",
+    ];
+    let mut bytes = value.bytes();
+    let valid = bytes
+        .next()
+        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    if !valid {
+        return Err("Use an ASCII identifier: [A-Za-z_][A-Za-z0-9_]*".into());
+    }
+    if RESERVED.contains(&value) || value.starts_with("_dirstory_") {
+        return Err("Command name is reserved or conflicts with dirstory".into());
+    }
+    Ok(value.into())
+}
+
+/// Parsed selection identity; reject malformed tokens before opening history.
+#[derive(Clone, Debug)]
+struct CommitToken {
+    revision: u64,
+    offset: u64,
+}
+
+fn commit_token(value: &str) -> Result<CommitToken, String> {
+    let parse = || {
+        let (revision, offset) = value.split_once(':')?;
+        if [revision, offset]
+            .iter()
+            .any(|v| v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return None;
+        }
+        Some(CommitToken {
+            revision: revision.parse().ok()?,
+            offset: offset.parse().ok()?,
+        })
+    };
+    parse().ok_or_else(|| "Invalid selection token; expected REVISION:OFFSET".into())
+}
+
 #[derive(Debug, Parser)]
 #[command(
     about = "Navigate backward and forward through visited directories",
@@ -35,7 +134,7 @@ eval \"$(dirstory init zsh)\" for Zsh, or dirstory init fish | source for Fish."
     )]
     Init {
         /// Directory-change command: wrapper in Bash/sh, convenience in Zsh/Fish.
-        #[arg(short, long, default_value = "cd", value_name = "COMMAND")]
+        #[arg(short, long, default_value = "cd", value_name = "COMMAND", value_parser = command_name)]
         command: String,
 
         /// Shell for which to generate initialization code.
@@ -136,7 +235,8 @@ A stale token is rejected; this command does not undo a cd already performed by 
     )]
     Commit {
         /// Selection token returned by internal select.
-        token: String,
+        #[arg(value_name = "TOKEN", value_parser = commit_token)]
+        token: CommitToken,
     },
 }
 
@@ -170,8 +270,17 @@ impl Cli {
             unreachable!();
         };
 
-        let config = Config::new();
-        let dir = PathBuf::from(get_tmp_dir(config.mode));
+        match cmd {
+            InternalCommand::Ensure { path } | InternalCommand::Reset { path } => check_path(path)?,
+            InternalCommand::Visit { from, to } => {
+                check_path(from)?;
+                check_path(to)?;
+            }
+            _ => {}
+        }
+
+        let config = Config::new()?;
+        let dir = get_tmp_dir(config.mode)?;
         let exclusive = !matches!(
             cmd,
             InternalCommand::Select { .. } | InternalCommand::List { .. }
@@ -187,16 +296,12 @@ impl Cli {
                 }
             }
             InternalCommand::Ensure { path } => {
-                check_path(path)?;
                 h.ensure(path)?;
             }
             InternalCommand::Reset { path } => {
-                check_path(path)?;
                 h.reset(path)?;
             }
             InternalCommand::Visit { from, to } => {
-                check_path(from)?;
-                check_path(to)?;
                 h.visit(from, to)?;
             }
             InternalCommand::List { direction, n } => {
@@ -211,15 +316,7 @@ impl Cli {
                 }
             }
             InternalCommand::Commit { token } => {
-                let parse = || -> Option<(u64, u64)> {
-                    let (r, o) = token.split_once(':')?;
-                    Some((r.parse().ok()?, o.parse().ok()?))
-                };
-
-                let (revision, offset) = parse().ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "Invalid selection token")
-                })?;
-                h.commit(revision, offset)?;
+                h.commit(token.revision, token.offset)?;
             }
         }
 

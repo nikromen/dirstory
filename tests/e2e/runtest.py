@@ -88,16 +88,25 @@ class ShellCase(unittest.TestCase):
 
     def configure(self, mode):
         (self.root / "config/dirstory.json").write_text(
-            json.dumps({"mode": mode, "unique_top": True})
+            json.dumps({"mode": mode})
         )
 
     def init(self, name="cd"):
-        dialect = "sh" if self.shell == "dash" else self.shell
+        if self.shell == "dash":
+            dialect = "sh"
+        else:
+            dialect = self.shell
         cmd = f"dirstory init {dialect} --command {shlex.quote(name)}"
-        return f"{cmd} | source" if self.shell == "fish" else f'eval "$({cmd})"'
+        if self.shell == "fish":
+            return f"{cmd} | source"
+        else:
+            return f'eval "$({cmd})"'
 
     def builtin(self):
-        return "command cd" if self.shell in ("sh", "dash") else "builtin cd"
+        if self.shell in ("sh", "dash"):
+            return "command cd"
+        else:
+            return "builtin cd"
 
     def snapshot(self, history=True):
         if self.shell == "fish":
@@ -106,15 +115,22 @@ class ShellCase(unittest.TestCase):
         else:
             save = "result=$?"
             status = '"$result"'
-        back = "b -l 999" if history else ":"
-        forward = "f -l 999" if history else ":"
+        if history:
+            back = "b -l 999"
+            forward = "f -l 999"
+        else:
+            back = ":"
+            forward = ":"
         return (
             f"{save}\nprintf '{MARKER}\\n%s\\n%s\\nBACK\\n' {status} \"$PWD\"\n"
             f"{back}\nprintf 'FORWARD\\n'\n{forward}\nprintf 'END\\n'"
         )
 
     def script(self, commands, initialize=True, history=True, name="cd"):
-        lines = [self.init(name)] if initialize else []
+        if initialize:
+            lines = [self.init(name)]
+        else:
+            lines = []
         for command in commands:
             lines.extend(("printf '__DIRSTORY_COMMAND__\\n'", command, self.snapshot(history)))
         lines.append("true")  # Keep the parent shell alive through the last child call.
@@ -145,7 +161,13 @@ class ShellCase(unittest.TestCase):
         return states, details
 
     def paths(self, *names):
-        return [str(self.root / name) if name else str(self.root) for name in names]
+        paths = []
+        for name in names:
+            if name:
+                paths.append(str(self.root / name))
+            else:
+                paths.append(str(self.root))
+        return paths
 
     def assert_state(self, state, pwd, back=(), forward=(), status=0, details=""):
         self.assertEqual(state, State(status, self.paths(pwd)[0], self.paths(*back), self.paths(*forward)), details)
@@ -210,11 +232,40 @@ class ShellCase(unittest.TestCase):
         self.assertEqual(states[-1], states[1], details)
 
     def test_invalid_arguments_preserve_history(self):
-        commands = ["cd a", "cd ../b"] + [f"{cmd} {arg}" for cmd in ("b", "f") for arg in ("-1", "nope", "--unknown", "-l nope")]
+        arguments = ("-1", "+1", "nope", "--unknown", "-l nope", "''", "1 2",
+                     "-l 1 2", "1 --list", "--help 1", "-h -l", "--list --help",
+                     "18446744073709551616", "999999999999999999999999999999999999")
+        commands = ["cd a", "cd ../b"] + [f"{cmd} {arg}" for cmd in ("b", "f") for arg in arguments]
         states, details = self.run_script(commands)
         for state in states[2:]:
-            self.assertNotEqual(state.status, 0, details)
+            self.assertEqual(state.status, 2, details)
             self.assertEqual((state.pwd, state.back, state.forward), (states[1].pwd, states[1].back, states[1].forward), details)
+
+    def test_decimal_counts_and_help_grammar(self):
+        states, details = self.run_script(["cd a", "cd ../b", "b 0001", "f 0001",
+                                          "b 0000", "f --list 0000", "b -h", "f --help",
+                                          "b 18446744073709551615", "f 18446744073709551615"])
+        self.assert_state(states[2], "a", ("",), ("b",), details=details)
+        for state in states[3:8]:
+            self.assert_state(state, "b", ("a", ""), details=details)
+        self.assertIn("Usage: b", self.command_outputs[6], details)
+        self.assertEqual(self.command_outputs[6].replace("Usage: b", "Usage: f").replace("       b", "       f"),
+                         self.command_outputs[7], details)
+        self.assert_state(states[8], "", (), ("a", "b"), details=details)
+        self.assert_state(states[9], "b", ("a", ""), details=details)
+
+    def test_invalid_arguments_and_help_never_call_backend(self):
+        # Replace the backend after initialization: even a pending PWD change
+        # must not be synchronized by help or invalid arguments.
+        if self.shell == "fish":
+            spy = "function dirstory; printf 'backend-called\\n' >> calls; return 1; end"
+            pending = "set -g _dirstory_last_pwd /pending"
+        else:
+            spy = "dirstory() { printf 'backend-called\\n' >> calls; return 1; }"
+            pending = "_dirstory_last_pwd=/pending"
+        states, details = self.run_script([spy, pending, "b nope", "f 1 2", "b --help", "f -h"], history=False)
+        self.assertEqual([s.status for s in states[2:]], [2, 2, 0, 0], details)
+        self.assertFalse((self.root / "calls").exists(), details)
 
     def test_same_directory_and_reinitialization(self):
         states, details = self.run_script(["cd a", "cd .", self.init(), "b", "f"])
@@ -242,7 +293,10 @@ class ShellCase(unittest.TestCase):
     def test_symlink_aliases_remain_distinct_visits(self):
         (self.root / "other-link").symlink_to(self.root / "target", target_is_directory=True)
         args = [str(self.root / name) for name in ("link", "other-link")]
-        cd = "cd" if self.shell == "fish" else self.builtin()
+        if self.shell == "fish":
+            cd = "cd"
+        else:
+            cd = self.builtin()
         reference, details = self.run_script([f"{cd} {shlex.quote(path)}" for path in args],
                                             initialize=False, history=False)
         # Verify the shell's own logical paths rather than canonicalizing in tests.
@@ -254,7 +308,10 @@ class ShellCase(unittest.TestCase):
 
     def test_custom_wrapper(self):
         states, details = self.run_script(["cd a", "cdir ../b", "b", "f"], name="cdir")
-        prior = ("",) if self.shell in ("bash", "zsh", "fish") else ()
+        if self.shell in ("bash", "zsh", "fish"):
+            prior = ("",)
+        else:
+            prior = ()
         self.assert_state(states[0], "a", prior, details=details)
         self.assert_state(states[1], "b", ("a",) + prior, details=details)
         self.assert_state(states[2], "a", prior, ("b",), details=details)
@@ -262,7 +319,10 @@ class ShellCase(unittest.TestCase):
 
     def test_native_cd_arguments_and_symlinks(self):
         args = ["a", "../b", "", "-", "-L " + shlex.quote(str(self.root / "link")), "-P " + shlex.quote(str(self.root / "link")), "../missing", "--bad-option"]
-        reference_cd = "cd" if self.shell == "fish" else self.builtin()
+        if self.shell == "fish":
+            reference_cd = "cd"
+        else:
+            reference_cd = self.builtin()
         reference, _ = self.run_script([f"{reference_cd} {arg}" for arg in args], initialize=False, history=False)
         actual, details = self.run_script([f"cd {arg}" for arg in args])
         visits = [str(self.root)]
@@ -298,7 +358,10 @@ class ShellCase(unittest.TestCase):
                 master, slave = pty.openpty()
                 stack.callback(os.close, master)
                 stack.callback(os.close, slave)
-                read = "read -l go" if self.shell == "fish" else "IFS= read -r go"
+                if self.shell == "fish":
+                    read = "read -l go"
+                else:
+                    read = "IFS= read -r go"
                 script = self.init() + f"\ncd {name}\n" + self.snapshot() + "\nprintf '__READY__\\n'\n" + read + "\nb\n" + self.snapshot() + "\nf\n" + self.snapshot() + "\ntrue"
                 child = subprocess.Popen([self.shell, "-c", script], cwd=self.root, env=self.env,
                     stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -320,7 +383,7 @@ class ShellCase(unittest.TestCase):
                         if b"__READY__\n" in outputs[key.data]:
                             selector.unregister(key.fileobj)
             files = list((self.root / "runtime/dirstory").glob("*/history.bin"))
-            self.assertEqual(len(files), 2, f"{mode} must separate the two live shells")
+            self.assertEqual(len(files), 2, f"{mode} must separate the two live shells: {files}")
             for child, master, name, script in processes:
                 os.write(master, b"go\n")
                 try:
@@ -347,8 +410,8 @@ class ShellCase(unittest.TestCase):
     def test_tty_session_isolation(self):
         self.session_isolation("tty")
 
-    def test_ppid_session_isolation(self):
-        self.session_isolation("ppid")
+    def test_pid_session_isolation(self):
+        self.session_isolation("pid")
 
     def test_tmux_session_isolation(self):
         for pane, path in (("%first", "/first"), ("%second", "/second")):
@@ -372,7 +435,10 @@ def main():
         if selected and shell != selected:
             continue
         extra = {"bash": BashScenarios, "zsh": ZshScenarios, "fish": FishScenarios}.get(shell)
-        bases = (extra, HookScenarios, ShellCase) if extra else (ShellCase,)
+        if extra:
+            bases = (extra, HookScenarios, ShellCase)
+        else:
+            bases = (ShellCase,)
         case = type(shell, bases, {"shell": shell})
         for name in unittest.defaultTestLoader.getTestCaseNames(case):
             if not pattern or pattern in f"{shell}/{name}":

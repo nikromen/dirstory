@@ -20,6 +20,18 @@ pub fn generate_template(shell: &Shell, command: &str) -> String {
         _ => "_dirstory_sync || return 1",
     };
     let common = include_str!("shell/common.sh").replace("<SYNC>", sync);
+    let arguments = match shell {
+        Shell::Fish => include_str!("shell/arguments.fish"),
+        _ => include_str!("shell/arguments.sh"),
+    };
+    let help = "Usage: $dirstory_name [N]
+       $dirstory_name -l|--list [N]
+       $dirstory_name -h|--help
+
+Navigate through directory visits (default: 1 step).
+  -l, --list  List neighboring visits (default: 10).
+  -h, --help  Show this help.
+N must be a nonnegative decimal integer; zero is allowed.";
 
     let custom = if command == "cd" {
         String::new()
@@ -32,6 +44,9 @@ pub fn generate_template(shell: &Shell, command: &str) -> String {
 
     template
         .replace("<COMMON>", &common)
+        .replace("<ARGUMENTS>", arguments)
+        .replace("<HELP>", help)
+        .replace("<MAX_COUNT>", &usize::MAX.to_string())
         .replace("<CUSTOM_COMMAND>", &custom)
         .replace("<COMMAND>", command)
 }

@@ -228,8 +228,11 @@ proptest! {
         for (step, op) in ops.iter().enumerate() {
             match op {
                 Op::Visit { name, mismatch } => {
-                    let old = if *mismatch { PathBuf::from("/outside") }
-                        else { model.paths[model.cursor].clone() };
+                    let old = if *mismatch {
+                        PathBuf::from("/outside")
+                    } else {
+                        model.paths[model.cursor].clone()
+                    };
                     let new = PathBuf::from(format!("/{name}"));
                     history.visit(&old,&new).unwrap(); model.visit(old,new);
                 }
@@ -240,7 +243,10 @@ proptest! {
                     prop_assert_eq!(selected.as_ref().map(|s|s.entry.path.clone()), target.map(|i|model.paths[i].clone()));
                     prop_assert_eq!(fs::read(dir.path().join("history.bin")).unwrap(),before);
                     if *commit {
-                        if let Some(s) = selected { history.commit(s.revision,s.entry.offset).unwrap(); model.commit(target.unwrap()); }
+                        if let Some(s) = selected {
+                            history.commit(s.revision,s.entry.offset).unwrap();
+                            model.commit(target.unwrap());
+                        }
                     }
                 }
                 Op::Reset(name) => { let path=PathBuf::from(format!("/{name}")); history.reset(&path).unwrap();model.reset(path); }
@@ -272,7 +278,10 @@ proptest! {
                 }
             }
 
-            if step % 8 == 0 { drop(history); history=History::open(dir.path(),true).unwrap(); }
+            if step % 8 == 0 {
+                drop(history);
+                history=History::open(dir.path(),true).unwrap();
+            }
             let current = history.select(true,0).unwrap().unwrap();
             prop_assert_eq!(current.entry.path,model.paths[model.cursor].clone());
             prop_assert_eq!(current.revision,model.revision);

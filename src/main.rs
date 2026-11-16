@@ -14,6 +14,10 @@ fn main() {
     let cli = Cli::parse();
     if let Err(error) = cli.run() {
         eprintln!("dirstory: {error}");
-        std::process::exit(1);
+        std::process::exit(if error.kind() == std::io::ErrorKind::InvalidInput {
+            2
+        } else {
+            1
+        });
     }
 }

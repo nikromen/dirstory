@@ -34,7 +34,10 @@ class Console:
         if case.shell == "zsh":
             os.write(self.master, b"unsetopt zle; PS1=$'__READY__\\n'; RPS1=''\n")
         self.read_prompt()
-        self.step(setup + "; " + case.init() if setup else case.init())
+        if setup:
+            self.step(setup + "; " + case.init())
+        else:
+            self.step(case.init())
 
     def close(self):
         if getattr(self, "closed", False):
@@ -126,7 +129,10 @@ class HookScenarios:
     def test_interactive_prompt_preserves_status(self):
         console = Console(self)
         console.step("false")
-        command = "printf '__STATUS__%s\\n' $status" if self.shell == "fish" else "printf '__STATUS__%s\\n' \"$?\""
+        if self.shell == "fish":
+            command = "printf '__STATUS__%s\\n' $status"
+        else:
+            command = "printf '__STATUS__%s\\n' \"$?\""
         output = console.step(command)
         self.assertIn("__STATUS__1\n", output)
 
@@ -145,13 +151,26 @@ class HookScenarios:
 
     def test_failed_visit_keeps_observation_retryable(self):
         if self.shell == "fish":
-            spy = "function dirstory; if test \"$argv[2]\" = visit; return 1; end; command dirstory $argv; end"
+            spy = '''function dirstory
+    if test "$argv[2]" = visit
+        return 1
+    end
+    command dirstory $argv
+end'''
             remove = "functions -e dirstory"
             observe = "_dirstory_prompt"
             change = "builtin cd a"
         else:
-            spy = 'dirstory() { if [ "$2" = visit ]; then return 1; fi; command dirstory "$@"; }'
-            remove = "unfunction dirstory" if self.shell == "zsh" else "unset -f dirstory"
+            spy = '''dirstory() {
+    if [ "$2" = visit ]; then
+        return 1
+    fi
+    command dirstory "$@"
+}'''
+            if self.shell == "zsh":
+                remove = "unfunction dirstory"
+            else:
+                remove = "unset -f dirstory"
             observe = "_dirstory_observe"
             change = "cd a"
         states, details = self.run_script([spy, change, remove, observe, "b", "f"])
@@ -161,16 +180,32 @@ class HookScenarios:
 
     def test_failed_commit_clears_navigation_suppression(self):
         if self.shell == "fish":
-            spy = "function dirstory; if test \"$argv[2]\" = commit; return 1; end; command dirstory $argv; end"
+            spy = '''function dirstory
+    if test "$argv[2]" = commit
+        return 1
+    end
+    command dirstory $argv
+end'''
             remove = "functions -e dirstory"
         else:
-            spy = 'dirstory() { if [ "$2" = commit ]; then return 1; fi; command dirstory "$@"; }'
-            remove = "unfunction dirstory" if self.shell == "zsh" else "unset -f dirstory"
+            spy = '''dirstory() {
+    if [ "$2" = commit ]; then
+        return 1
+    fi
+    command dirstory "$@"
+}'''
+            if self.shell == "zsh":
+                remove = "unfunction dirstory"
+            else:
+                remove = "unset -f dirstory"
         states, details = self.run_script(["cd a", "cd ../b", spy, "b", remove, "cd ../c", "b", "f"])
         self.assertNotEqual(states[3].status, 0, details)
         self.assertEqual(states[3].pwd, str(self.root / "a"), details)
         self.assertEqual(states[5].pwd, str(self.root / "c"), details)
-        expected = "b" if self.shell == "zsh" else "a"
+        if self.shell == "zsh":
+            expected = "b"
+        else:
+            expected = "a"
         self.assertEqual(states[6].pwd, str(self.root / expected), details)
         self.assertEqual(states[7].pwd, str(self.root / "c"), details)
 
@@ -232,16 +267,27 @@ class NativeHookScenarios:
 
     def test_navigation_redirect_does_not_commit(self):
         if self.shell == "fish":
-            redirect = 'function redirect --on-variable PWD; if test "$PWD" = "' + str(self.root / "a") + '"; builtin cd "' + str(self.root / "c") + '"; end; end'
+            redirect = '''function redirect --on-variable PWD
+    if test "$PWD" = "''' + str(self.root / "a") + '''"
+        builtin cd "''' + str(self.root / "c") + '''"
+    end
+end'''
             remove = "functions -e redirect"
         else:
-            redirect = 'chpwd() { if [[ "$PWD" = "' + str(self.root / "a") + '" ]]; then builtin cd "' + str(self.root / "c") + '"; fi; }'
+            redirect = '''chpwd() {
+    if [[ "$PWD" = "''' + str(self.root / "a") + '''" ]]; then
+        builtin cd "''' + str(self.root / "c") + '''"
+    fi
+}'''
             remove = "unfunction chpwd"
         states, details = self.run_script(["cd a", "cd ../b", redirect, "b", remove, "cd ../a", "b"])
         self.assertNotEqual(states[3].status, 0, details)
         self.assertEqual(states[3].pwd, str(self.root / "c"), details)
         # Fish's list calls repair the redirected position; Zsh has no fallback.
-        expected = "c" if self.shell == "fish" else "b"
+        if self.shell == "fish":
+            expected = "c"
+        else:
+            expected = "b"
         self.assertEqual(states[-1].pwd, str(self.root / expected), details)
         if self.shell == "zsh":
             self.assertEqual(states[3].back, states[2].back, details)

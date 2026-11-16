@@ -1,31 +1,59 @@
-use std::env;
-use std::fs;
-use std::os::unix::process;
-use std::process::id;
+use std::{env, fs, io, path::PathBuf, process::id};
 
 use crate::config::Mode;
 
-pub fn get_tmp_dir(mode: Mode) -> String {
-    let tmp_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+/// Resolve a session directory; missing environment or proc entries are errors.
+pub fn get_tmp_dir(mode: Mode) -> io::Result<PathBuf> {
+    let tmp_dir = env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+
     let identifier = match mode {
-        Mode::Tmux => env::var("TMUX_PANE")
-            .unwrap()
-            .trim_start_matches('%')
-            .to_string(),
-        // Assumes other scripts are launched from profiles (e.g. .bashrc) to match
-        // the parent process id. Otherwise, it needs to find grandparent process id to
-        // match the shell process id.
-        Mode::Ppid => process::parent_id().to_string(),
-        Mode::Tty => {
-            let tty_path = fs::read_link(format!("/proc/{}/fd/0", id())).unwrap();
-            let tty = tty_path.to_string_lossy();
-            if let Some(pos) = tty.rfind('/') {
-                tty[pos + 1..].to_string()
-            } else {
-                panic!("Failed to get tty name");
+        Mode::Tmux => {
+            let pane = env::var("TMUX_PANE").map_err(|error| {
+                io::Error::other(format!(
+                    "Cannot use tmux mode: TMUX_PANE is unavailable: {error}"
+                ))
+            })?;
+            let identifier = pane.trim_start_matches('%');
+            if identifier.is_empty() || identifier.contains('/') || matches!(identifier, "." | "..")
+            {
+                return Err(io::Error::other("Cannot use tmux mode: invalid TMUX_PANE"));
             }
+            identifier.to_owned().into()
+        }
+        Mode::Pid => {
+            let pid = env::var("DIRSTORY_SHELL_PID").map_err(|_| {
+                io::Error::other(
+                    "Cannot use pid mode: DIRSTORY_SHELL_PID is unavailable; initialize your shell",
+                )
+            })?;
+            if pid.is_empty()
+                || !pid.bytes().all(|byte| byte.is_ascii_digit())
+                || pid.parse::<u32>().ok().filter(|&pid| pid > 0).is_none()
+            {
+                return Err(io::Error::other(
+                    "Cannot use pid mode: invalid DIRSTORY_SHELL_PID",
+                ));
+            }
+            pid.into()
+        }
+        Mode::Tty => {
+            let tty_path = fs::read_link(format!("/proc/{}/fd/0", id())).map_err(|error| {
+                io::Error::new(error.kind(), format!("Cannot identify terminal: {error}"))
+            })?;
+            // A substitution may provide a pipe instead of a terminal path.
+            // Preserve the existing session contract without creating pipe sessions.
+            if !tty_path.is_absolute() {
+                return Err(io::Error::other(
+                    "Cannot identify terminal from standard input",
+                ));
+            }
+            tty_path
+                .file_name()
+                .ok_or_else(|| io::Error::other("Cannot identify terminal name"))?
+                .to_owned()
         }
     };
-
-    format!("{}/dirstory/{}", tmp_dir, identifier)
+    Ok(tmp_dir.join("dirstory").join(identifier))
 }

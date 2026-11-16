@@ -16,8 +16,6 @@ It's very similar to navigating back and forth between web pages in your web bro
 
 - [Installation](#installation)
 - [Usage](#usage)
-  - [Command name specification](#command-name-specification)
-  - [Limitations](#limitations)
 
 <!-- tocstop -->
 
@@ -29,8 +27,7 @@ It's very similar to navigating back and forth between web pages in your web bro
 
    Initialize dirstory for your shell by adding the output of `dirstory init <SHELL>` in
    your shell's configuration file. To add a custom directory-change command, use
-   `dirstory init <SHELL> --command <COMMAND>`. More in
-   [command-name-specification](#command-name-specification).
+   `dirstory init <SHELL> --command <COMMAND>`.
 
    <details>
    <summary>sh</summary>
@@ -87,20 +84,5 @@ and similarly to go forward by one step:
 $ f
 ```
 
-Changing directory after going back replaces the forward history. Staying in the
-same directory leaves it unchanged; revisiting a directory later creates a separate
-visit. If a saved directory is unavailable, navigation fails and keeps the visit
-so you can retry after restoring it.
-
-### Command name specification
-
-Use `dirstory init <SHELL> --command uwu` to name your directory-change command `uwu`.
-In Bash and sh, use `uwu` instead of `cd`. Zsh and Fish also track changes made
-through ordinary `cd`.
-
-### Limitations
-
-- Multiple changes bypassing the custom command before the next prompt may miss intermediate visits.
-- Zsh does not track `cd -q`.
-- Fish may miss intermediate visits when several directory changes occur together.
-- sh tracks only changes made through the configured directory-change command.
+For more options, use `b --help`, `f --help`, or `dirstory --help`.
+See `man 1 dirstory` for commands and limitations, and `man 5 dirstory` for configuration.

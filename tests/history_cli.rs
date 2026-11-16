@@ -18,7 +18,7 @@ impl Fixture {
         fs::create_dir(root.path().join("config")).unwrap();
         fs::write(
             root.path().join("config/dirstory.json"),
-            r#"{"mode":"tmux","unique_top":true}"#,
+            r#"{"mode":"tmux"}"#,
         )
         .unwrap();
         Self { root }
@@ -250,4 +250,153 @@ fn concurrency_only_one_commit_of_the_same_token_succeeds() {
     assert!(String::from_utf8_lossy(&loser.stderr).contains("changed since selection"));
     assert!(results.iter().all(|o| o.stdout.is_empty()));
     assert_eq!(f.run(&["internal", "list", "forward", "1"]).stdout, b"/b\n");
+}
+
+/// Names embedded in generated code must be portable and collision-free.
+#[test]
+fn initialization_validates_names_before_emitting_code() {
+    let f = Fixture::new();
+    for shell in ["bash", "zsh", "fish", "sh"] {
+        for name in ["cd", "cdir", "_jump", "Jump42"] {
+            assert!(!f.run(&["init", shell, "--command", name]).stdout.is_empty());
+        }
+        for name in [
+            "",
+            "1cd",
+            "c-d",
+            "á",
+            "cd;touch /tmp/injected",
+            "$(id)",
+            "cd\nfalse",
+            "if",
+            "function",
+            "b",
+            "f",
+            "dirstory",
+            "_dirstory_sync",
+            "command",
+            "builtin",
+            "set",
+            "printf",
+            "string",
+        ] {
+            let result = f.output(&["init", shell, "--command", name]);
+            assert_eq!(result.status.code(), Some(2), "{shell}: {name:?}");
+            assert!(result.stdout.is_empty());
+            assert!(!result.stderr.is_empty());
+        }
+    }
+    assert!(!f.data().exists());
+}
+
+/// Invalid protocol inputs are rejected before opening or creating storage.
+#[test]
+fn invalid_protocol_inputs_do_not_create_history() {
+    let f = Fixture::new();
+    for args in [
+        vec!["internal", "commit", "1:+64"],
+        vec!["internal", "commit", "1:18446744073709551616"],
+        vec!["internal", "ensure", "/bad\npath"],
+        vec!["internal", "visit", "--from", "/a", "--to", "/bad\npath"],
+    ] {
+        assert_eq!(f.output(&args).status.code(), Some(2));
+        assert!(!f.root.path().join("dirstory").exists());
+    }
+}
+
+/// Configuration errors have a location and a runtime exit code, never a panic.
+#[test]
+fn configuration_errors_are_contextual_and_do_not_fall_back() {
+    let f = Fixture::new();
+    let yaml = f.root.path().join("config/dirstory.yaml");
+    for content in [
+        "mode: invalid",
+        "mode: [",
+        "unique_top: true",
+        "unknown: 1",
+        "mode: 42",
+    ] {
+        fs::write(&yaml, content).unwrap();
+        let result = f.output(&["internal", "ensure", "/a"]);
+        assert_eq!(result.status.code(), Some(1));
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains("dirstory.yaml"), "{error}");
+        assert!(!error.contains("panicked"), "{error}");
+        assert!(result.stdout.is_empty());
+        assert!(!f.data().exists());
+    }
+    fs::write(&yaml, "mode: pid").unwrap();
+    let mut command = f.command(&["internal", "ensure", "/a"]);
+    command.env("DIRSTORY_SHELL_PID", "12345");
+    assert!(bounded_output(command).status.success());
+    assert!(!f.data().exists(), "YAML must take precedence over JSON");
+}
+
+#[test]
+fn missing_session_and_configuration_environment_returns_errors() {
+    let f = Fixture::new();
+    let mut command = f.command(&["internal", "ensure", "/a"]);
+    command.env_remove("TMUX_PANE");
+    let result = bounded_output(command);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("TMUX_PANE"));
+    for pane in ["", "%", "../escape", "/escape"] {
+        let mut command = f.command(&["internal", "ensure", "/a"]);
+        command.env("TMUX_PANE", pane);
+        assert_eq!(bounded_output(command).status.code(), Some(1));
+    }
+    let mut command = f.command(&["internal", "ensure", "/a"]);
+    command.env_remove("HOME").env("XDG_CONFIG_HOME", "");
+    let result = bounded_output(command);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("configuration"));
+    assert!(!f.data().exists());
+}
+
+#[test]
+fn pid_mode_requires_a_valid_shell_pid() {
+    let f = Fixture::new();
+    fs::write(f.root.path().join("config/dirstory.yaml"), "mode: pid").unwrap();
+    for pid in [
+        None,
+        Some(""),
+        Some("0"),
+        Some("../escape"),
+        Some("4294967296"),
+    ] {
+        let mut command = f.command(&["internal", "ensure", "/a"]);
+        match pid {
+            Some(pid) => {
+                command.env("DIRSTORY_SHELL_PID", pid);
+            }
+            None => {
+                command.env_remove("DIRSTORY_SHELL_PID");
+            }
+        }
+        let output = bounded_output(command);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("DIRSTORY_SHELL_PID"));
+    }
+    assert!(!f.root.path().join("dirstory").exists());
+}
+
+#[test]
+fn config_home_fallback_and_non_utf8_paths_work() {
+    use std::os::unix::ffi::OsStringExt;
+    let f = Fixture::new();
+    let home = f.root.path().join("home");
+    fs::create_dir_all(home.join(".config")).unwrap();
+    fs::write(home.join(".config/dirstory.json"), r#"{"mode":"tmux"}"#).unwrap();
+    let mut command = f.command(&["internal", "ensure", "/a"]);
+    command.env("HOME", home).env("XDG_CONFIG_HOME", "");
+    assert!(bounded_output(command).status.success());
+    let dir = f
+        .root
+        .path()
+        .join(std::ffi::OsString::from_vec(b"config-\xff".to_vec()));
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("dirstory.json"), r#"{"mode":"tmux"}"#).unwrap();
+    let mut command = f.command(&["internal", "ensure", "/a"]);
+    command.env("XDG_CONFIG_HOME", dir);
+    assert!(bounded_output(command).status.success());
 }

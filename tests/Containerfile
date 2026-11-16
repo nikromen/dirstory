@@ -3,7 +3,7 @@ FROM fedora:latest
 RUN dnf install -y \
     rust cargo clippy rustfmt \
     bash dash zsh fish \
-    python3 git just pre-commit nodejs \
+    python3 git just pre-commit nodejs pandoc groff-base man-db \
     && dnf clean all
 
 # Sources are mounted at runtime. Build and hook caches live in named volumes.
