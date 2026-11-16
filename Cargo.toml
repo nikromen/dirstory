@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Jiri Kyjovsky <j1.kyjovsky@gmail.com>"]
 about = "Add history functionality to your cd command"
 edition = "2021"
+license = "GPL-3.0-or-later"
 rust-version = "1.89"
 
 [dependencies]
@@ -20,3 +21,9 @@ proptest = "1.11.0"
 tempfile = "3.15.0"
 test-case = "3.3.1"
 uuid = { version = "1.12.1", features = ["v4"] }
+
+[profile.rpm]
+inherits = "release"
+lto = true
+codegen-units = 1
+debug = true

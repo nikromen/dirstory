@@ -3,3 +3,6 @@ node_modules
 
 /.cache
 __pycache__/
+
+/packaging/rpm/*.tar.gz
+/packaging/rpm/results/
